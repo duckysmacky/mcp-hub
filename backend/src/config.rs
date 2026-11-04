@@ -9,6 +9,8 @@ use serde::Deserialize;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use url::{Host, Url};
 
+use crate::crypto::KdfParams;
+
 /// Everything loaded at startup: sensitive and deployment values from the
 /// environment, non-sensitive tuning from `settings.toml`.
 pub struct Config {
@@ -128,6 +130,50 @@ pub struct Settings {
     pub runtimes: RuntimeSettings,
     pub limits: LimitSettings,
     pub network: NetworkSettings,
+    pub sessions: SessionSettings,
+    pub password_kdf: PasswordKdfSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SessionSettings {
+    pub web_session_ttl_secs: u64,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            web_session_ttl_secs: 2_592_000,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PasswordKdfSettings {
+    pub memory_kib: u32,
+    pub iterations: u32,
+    pub parallelism: u32,
+}
+
+impl Default for PasswordKdfSettings {
+    fn default() -> Self {
+        Self {
+            memory_kib: 65536,
+            iterations: 3,
+            parallelism: 1,
+        }
+    }
+}
+
+impl PasswordKdfSettings {
+    pub fn params(&self) -> KdfParams {
+        KdfParams {
+            memory_kib: self.memory_kib,
+            iterations: self.iterations,
+            parallelism: self.parallelism,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

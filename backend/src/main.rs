@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let config = Arc::new(Config::from_env(settings)?);
     let pool = db::connect(config.database.clone()).await?;
+    db::migrate(&pool).await?;
 
     let catalog = Catalog::load(&config.settings.paths.catalog)?;
     let bin_scripts = install_all(

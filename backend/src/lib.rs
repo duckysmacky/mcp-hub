@@ -1,23 +1,37 @@
+pub mod api;
 pub mod app_state;
+pub mod auth;
 pub mod bridge;
 pub mod catalog;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod error;
 pub mod net_guard;
 pub mod process;
 pub mod supervisor;
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, Request, State},
+    http::StatusCode,
+    routing::get,
+};
 use serde_json::{Value, json};
 use tower_http::trace::TraceLayer;
 
 use app_state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
+    let max_body_bytes = state.config.settings.limits.max_body_bytes;
     Router::new()
         .route("/health", get(health))
-        .layer(TraceLayer::new_for_http())
+        .nest("/api", api::routes(state.clone()))
+        .layer(DefaultBodyLimit::max(max_body_bytes))
+        // Only the path: query strings can carry OAuth parameters.
+        .layer(TraceLayer::new_for_http().make_span_with(|request: &Request| {
+            tracing::info_span!("request", method = %request.method(), path = request.uri().path())
+        }))
         .with_state(state)
 }
 

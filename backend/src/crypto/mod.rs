@@ -92,7 +92,10 @@ impl Token {
     }
 
     pub fn encode(&self, prefix: &str) -> Zeroizing<String> {
-        Zeroizing::new(format!("{prefix}{}", URL_SAFE_NO_PAD.encode(self.0.as_slice())))
+        Zeroizing::new(format!(
+            "{prefix}{}",
+            URL_SAFE_NO_PAD.encode(self.0.as_slice())
+        ))
     }
 
     /// The value stored in the database and used for lookups.

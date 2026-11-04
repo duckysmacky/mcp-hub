@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO web_sessions (token_hash, user_id, wrapped_dek, expires_at)\n         VALUES ($1, $2, ''::bytea, now() + make_interval(secs => $3))\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "web_sessions",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "166ae6257d0aeda62647ba61c70c68cca04ca3a6e390dd478430f15a74981fea"
+}

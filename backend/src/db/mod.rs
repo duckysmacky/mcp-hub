@@ -1,3 +1,6 @@
+pub mod users;
+pub mod web_sessions;
+
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -22,4 +25,12 @@ pub async fn connect(options: PgConnectOptions) -> anyhow::Result<PgPool> {
             Err(error) => return Err(error).context("connecting to the database"),
         }
     }
+}
+
+/// Applies any migrations that haven't run yet.
+pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
+    sqlx::migrate!()
+        .run(pool)
+        .await
+        .context("running migrations")
 }
