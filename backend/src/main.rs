@@ -7,6 +7,7 @@ use mcp_hub::{
     catalog::{Catalog, install::install_all},
     config::{Config, Settings},
     db,
+    supervisor::Supervisor,
 };
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
@@ -41,15 +42,20 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding {}", config.bind_addr))?;
     tracing::info!(address = %config.bind_addr, public_url = config.public_url.as_str(), "listening");
 
+    let supervisor = Supervisor::new(config.clone());
+    supervisor.spawn_reaper();
     let state = AppState {
         config,
         pool: pool.clone(),
         catalog: Arc::new(catalog),
         bin_scripts: Arc::new(bin_scripts),
+        supervisor: supervisor.clone(),
     };
     let (drain_started, drain_signal) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(listener, build_router(state)).with_graceful_shutdown(async move {
         shutdown_signal().await;
+        // Killing the children first also ends open SSE streams, so connections can drain.
+        supervisor.shutdown().await;
         let _ = drain_started.send(());
     });
 
