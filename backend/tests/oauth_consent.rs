@@ -309,6 +309,7 @@ async fn approval_resolves_the_slug_for_the_logged_in_user(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(details["instance"], Value::Null);
+    assert_eq!(details["requested_slug"], "demo");
     let path = format!("/api/oauth/pending/{pending}/approve");
     let refused = app.post(&path, Some(&bob), json!({})).await;
     assert_eq!(refused.status(), StatusCode::CONFLICT);

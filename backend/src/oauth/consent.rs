@@ -45,6 +45,7 @@ struct PendingDetails {
     redirect_host: Option<String>,
     redirect_is_loopback: bool,
     scope: String,
+    requested_slug: Option<String>,
     /// `null` when the logged-in user has no instance with this slug.
     instance: Option<InstanceSummary>,
 }
@@ -78,6 +79,8 @@ async fn pending_details(
         .ok_or(ApiError::NotFound)?;
     let instance = requested_instance(&state, session.user_id, &pending).await?;
     let redirect = Url::parse(&pending.redirect_uri).ok();
+    let requested_slug =
+        slug_from_resource(&state.config.public_url, &pending.resource).map(str::to_owned);
 
     Ok(Json(PendingDetails {
         client_name_self_reported: client.client_name,
@@ -86,6 +89,7 @@ async fn pending_details(
             .and_then(|url| url.host_str().map(str::to_owned)),
         redirect_is_loopback: redirect.as_ref().is_some_and(host_is_loopback),
         scope: pending.scope,
+        requested_slug,
         instance: instance.map(|instance| InstanceSummary {
             slug: instance.slug,
             server_id: instance.server_id,
