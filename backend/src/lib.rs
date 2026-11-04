@@ -2,6 +2,7 @@ pub mod app_state;
 pub mod catalog;
 pub mod config;
 pub mod db;
+pub mod process;
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde_json::{Value, json};

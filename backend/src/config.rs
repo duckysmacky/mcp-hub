@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, path::Path, str::FromStr};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -119,7 +123,44 @@ fn host_is_loopback(url: &Url) -> bool {
 /// so a credential pasted into the file stops the hub from starting.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Settings {}
+pub struct Settings {
+    pub paths: PathSettings,
+    pub runtimes: RuntimeSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PathSettings {
+    pub catalog: PathBuf,
+    pub packages: PathBuf,
+    pub scratch: PathBuf,
+}
+
+impl Default for PathSettings {
+    fn default() -> Self {
+        Self {
+            catalog: "/etc/mcp-hub/catalog.toml".into(),
+            packages: "/data/packages".into(),
+            scratch: "/tmp/mcp-hub/scratch".into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RuntimeSettings {
+    pub bun: PathBuf,
+    pub node: PathBuf,
+}
+
+impl Default for RuntimeSettings {
+    fn default() -> Self {
+        Self {
+            bun: "/usr/local/bin/bun".into(),
+            node: "/usr/local/bin/node".into(),
+        }
+    }
+}
 
 impl Settings {
     /// Loads `path`. A missing file means defaults only when `required` is false.
@@ -171,6 +212,13 @@ mod tests {
     #[test]
     fn settings_reject_unknown_keys() {
         assert!(toml::from_str::<Settings>("db_password = \"x\"").is_err());
+        assert!(toml::from_str::<Settings>("[paths]\nsecret = \"x\"").is_err());
+    }
+
+    #[test]
+    fn dev_settings_file_is_valid() {
+        let settings: Settings = toml::from_str(include_str!("../../settings.dev.toml")).unwrap();
+        assert_eq!(settings.runtimes.bun, Path::new("/usr/bin/bun"));
     }
 
     #[test]

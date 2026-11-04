@@ -1,0 +1,9 @@
+# Local development settings: cargo run -- --settings ../settings.dev.toml
+[paths]
+catalog  = "../catalog.example.toml"
+packages = "../.dev/packages"
+scratch  = "/tmp/mcp-hub-dev/scratch"
+
+[runtimes]
+bun  = "/usr/bin/bun"
+node = "/usr/bin/node"

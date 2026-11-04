@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use mcp_hub::{
     app_state::AppState,
+    catalog::Catalog,
     config::{Config, Settings},
 };
 use sqlx::{PgPool, postgres::PgConnectOptions};
@@ -16,5 +17,7 @@ pub fn state(pool: PgPool) -> AppState {
             settings: Settings::default(),
         }),
         pool,
+        catalog: Arc::new(Catalog::parse("").unwrap()),
+        bin_scripts: Arc::new(HashMap::new()),
     }
 }

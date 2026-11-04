@@ -4,6 +4,7 @@ use anyhow::{Context, bail};
 use mcp_hub::{
     app_state::AppState,
     build_router,
+    catalog::{Catalog, install::install_all},
     config::{Config, Settings},
     db,
 };
@@ -27,6 +28,14 @@ async fn main() -> anyhow::Result<()> {
     let config = Arc::new(Config::from_env(settings)?);
     let pool = db::connect(config.database.clone()).await?;
 
+    let catalog = Catalog::load(&config.settings.paths.catalog)?;
+    let bin_scripts = install_all(
+        &catalog,
+        &config.settings.paths.packages,
+        &config.settings.runtimes.bun,
+    )
+    .await?;
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
@@ -35,6 +44,8 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         config,
         pool: pool.clone(),
+        catalog: Arc::new(catalog),
+        bin_scripts: Arc::new(bin_scripts),
     };
     let (drain_started, drain_signal) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(listener, build_router(state)).with_graceful_shutdown(async move {

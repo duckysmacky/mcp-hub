@@ -19,4 +19,5 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 
 [dev-dependencies]
+tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }

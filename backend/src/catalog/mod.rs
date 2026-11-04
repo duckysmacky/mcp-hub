@@ -1,5 +1,7 @@
 //! The operator's list of allowed MCP servers. Users can only pick from it.
 
+pub mod install;
+
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
