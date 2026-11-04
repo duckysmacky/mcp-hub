@@ -2,6 +2,7 @@ pub mod app_state;
 pub mod bridge;
 pub mod catalog;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod process;
 pub mod supervisor;
