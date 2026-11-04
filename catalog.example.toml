@@ -1,0 +1,34 @@
+# Allowed MCP servers. Users pick from this list and can only set the listed env vars.
+# Every package must pin an exact version. See .context/CATALOG.md.
+
+# Taiga with a token: HTTP mode, credential passed as a header
+[[server]]
+id       = "taiga"
+mode     = "http"
+runtime  = "bun"
+package  = "@madebyclowd/taiga-mcp-server@1.0.2"
+bin      = "taiga-mcp-server-http"
+env_vars = ["TAIGA_BASE_URL", "TAIGA_TOKEN", "TAIGA_REQUIRE_ELICITATION"]
+
+[server.http]
+port_env = "HTTP_PORT"
+path     = "/mcp"
+headers  = { Authorization = "Bearer {TAIGA_TOKEN}" }
+
+# Taiga with username + password: only the stdio transport supports it
+[[server]]
+id       = "taiga-password"
+mode     = "stdio"
+runtime  = "bun"
+package  = "@madebyclowd/taiga-mcp-server@1.0.2"
+bin      = "taiga-mcp-server"
+env_vars = ["TAIGA_BASE_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_REQUIRE_ELICITATION"]
+
+# Firefly III: its packages only read credentials from env or args, so stdio is the only safe mode
+[[server]]
+id       = "firefly"
+mode     = "stdio"
+runtime  = "bun"
+package  = "@firefly-iii-mcp/local@1.4.0"
+bin      = "firefly-iii-mcp"
+env_vars = ["FIREFLY_III_BASE_URL", "FIREFLY_III_PAT", "FIREFLY_III_PRESET", "FIREFLY_III_TOOLS"]

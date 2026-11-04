@@ -1,4 +1,5 @@
 pub mod app_state;
+pub mod catalog;
 pub mod config;
 pub mod db;
 
