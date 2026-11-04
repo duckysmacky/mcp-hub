@@ -11,12 +11,13 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{app_state::AppState, auth};
+use crate::{app_state::AppState, auth, oauth};
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .nest("/auth", auth::routes())
         .merge(instances::routes())
+        .merge(oauth::consent::routes())
         .layer(middleware::from_fn_with_state(state, require_same_origin))
 }
 

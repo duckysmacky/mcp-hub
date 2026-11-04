@@ -112,7 +112,7 @@ impl FromStr for PublicUrl {
     }
 }
 
-fn host_is_loopback(url: &Url) -> bool {
+pub fn host_is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(Host::Domain(domain)) => domain == "localhost",
         Some(Host::Ipv4(address)) => address.is_loopback(),
@@ -131,7 +131,26 @@ pub struct Settings {
     pub limits: LimitSettings,
     pub network: NetworkSettings,
     pub sessions: SessionSettings,
+    pub oauth: OAuthSettings,
     pub password_kdf: PasswordKdfSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OAuthSettings {
+    pub access_token_ttl_secs: u64,
+    pub refresh_token_ttl_secs: u64,
+    pub auth_code_ttl_secs: u64,
+}
+
+impl Default for OAuthSettings {
+    fn default() -> Self {
+        Self {
+            access_token_ttl_secs: 3600,
+            refresh_token_ttl_secs: 2_592_000,
+            auth_code_ttl_secs: 60,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

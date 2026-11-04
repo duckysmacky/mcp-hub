@@ -8,6 +8,7 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod net_guard;
+pub mod oauth;
 pub mod process;
 pub mod supervisor;
 
@@ -27,6 +28,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .nest("/api", api::routes(state.clone()))
+        .merge(oauth::routes())
         .layer(DefaultBodyLimit::max(max_body_bytes))
         // Only the path: query strings can carry OAuth parameters.
         .layer(TraceLayer::new_for_http().make_span_with(|request: &Request| {

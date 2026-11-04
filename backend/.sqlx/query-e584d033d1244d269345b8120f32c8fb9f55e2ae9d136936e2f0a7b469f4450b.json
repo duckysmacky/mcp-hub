@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_pending_authorizations\n             (id, client_id, redirect_uri, code_challenge, state, scope, resource, expires_at)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(secs => $8))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e584d033d1244d269345b8120f32c8fb9f55e2ae9d136936e2f0a7b469f4450b"
+}

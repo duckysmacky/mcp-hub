@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_pending_authorizations SET consumed_at = now()\n         WHERE id = $1 AND consumed_at IS NULL AND expires_at > now()\n         RETURNING client_id, redirect_uri, code_challenge, state, scope, resource",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_pending_authorizations",
+            "name": "client_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "redirect_uri",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_pending_authorizations",
+            "name": "redirect_uri"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "code_challenge",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_pending_authorizations",
+            "name": "code_challenge"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_pending_authorizations",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scope",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_pending_authorizations",
+            "name": "scope"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "resource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_pending_authorizations",
+            "name": "resource"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "1b3b1dbd17f2843597907af0e3e990782a0da5809fda8a9d77306d34fbdd754a"
+}

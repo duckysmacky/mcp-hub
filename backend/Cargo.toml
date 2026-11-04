@@ -31,9 +31,10 @@ url = "2.5.8"
 zeroize = { version = "1.9.1", features = ["serde"] }
 
 [dev-dependencies]
-reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "stream"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "stream", "query"] }
 tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }
+url = "2.5.8"
 
 # Built by `cargo test`, never part of a release build.
 [[example]]

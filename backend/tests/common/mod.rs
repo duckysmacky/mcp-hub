@@ -149,6 +149,53 @@ impl TestApp {
     }
 }
 
+pub const CLIENT_REDIRECT: &str = "http://127.0.0.1:43123/callback";
+
+pub async fn register_client(app: &TestApp) -> String {
+    let response = app
+        .client()
+        .post(format!("{}/oauth/register", app.address))
+        .json(&json!({ "client_name": "Test Client", "redirect_uris": [CLIENT_REDIRECT] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    let body: Value = response.json().await.unwrap();
+    body["client_id"].as_str().unwrap().to_owned()
+}
+
+/// Runs `/oauth/authorize` and returns the pending id from the consent redirect.
+pub async fn start_authorization(
+    app: &TestApp,
+    client_id: &str,
+    slug: &str,
+    challenge: &str,
+) -> String {
+    let resource = format!("{}/mcp/{slug}", app.public_url());
+    let response = app
+        .client()
+        .get(format!("{}/oauth/authorize", app.address))
+        .query(&[
+            ("client_id", client_id),
+            ("redirect_uri", CLIENT_REDIRECT),
+            ("response_type", "code"),
+            ("code_challenge", challenge),
+            ("code_challenge_method", "S256"),
+            ("scope", "mcp"),
+            ("resource", &resource),
+            ("state", "client-state"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection(), "{}", response.status());
+    let location = response.headers()["location"].to_str().unwrap();
+    location
+        .strip_prefix("/consent?request=")
+        .unwrap_or_else(|| panic!("unexpected redirect: {location}"))
+        .to_owned()
+}
+
 /// Path of the fake MCP server. A plain `cargo test` builds it; it's built here only
 /// for a filtered run that skipped examples.
 pub fn fake_mcp_path() -> PathBuf {

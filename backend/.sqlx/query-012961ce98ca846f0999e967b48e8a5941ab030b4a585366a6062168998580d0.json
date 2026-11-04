@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code_hash, wrapped_dek FROM oauth_codes",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "code_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "wrapped_dek",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "wrapped_dek"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "012961ce98ca846f0999e967b48e8a5941ab030b4a585366a6062168998580d0"
+}
