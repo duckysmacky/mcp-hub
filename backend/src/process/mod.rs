@@ -4,7 +4,10 @@ use std::{
     collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use nix::{
@@ -16,8 +19,9 @@ use nix::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
-    process::Command,
+    process::{Child, Command},
 };
+use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use crate::catalog::{ServerMode, ServerTemplate};
@@ -129,6 +133,79 @@ impl OutputTail {
     pub fn contents(&self) -> String {
         let bytes = self.bytes.lock().expect("no code panics holding this lock");
         String::from_utf8_lossy(&bytes.iter().copied().collect::<Vec<u8>>()).into_owned()
+    }
+}
+
+/// Stops a process and its tasks, and remembers whether the hub asked for that.
+/// The token also fires when the process's streams fail or end on their own.
+#[derive(Clone, Default)]
+pub struct ProcessStop {
+    pub token: CancellationToken,
+    requested_by_hub: Arc<AtomicBool>,
+}
+
+impl ProcessStop {
+    pub fn request(&self) {
+        self.requested_by_hub.store(true, Ordering::SeqCst);
+        self.token.cancel();
+    }
+}
+
+/// What the status page shows about an instance's processes. Outlives each process.
+#[derive(Clone)]
+pub struct InstanceOutput {
+    pub tail: OutputTail,
+    last_exit: Arc<Mutex<Option<String>>>,
+}
+
+impl InstanceOutput {
+    pub fn new(tail_capacity: usize) -> Self {
+        Self {
+            tail: OutputTail::new(tail_capacity),
+            last_exit: Arc::default(),
+        }
+    }
+
+    pub fn last_exit(&self) -> Option<String> {
+        self.last_exit
+            .lock()
+            .expect("no code panics holding this lock")
+            .clone()
+    }
+
+    /// Owns a running child until it's gone: kills its group when `stop` fires, stops
+    /// everything else if it exits on its own, then removes its scratch directory.
+    pub async fn supervise_child(self, mut child: Child, stop: ProcessStop, scratch_dir: PathBuf) {
+        let process_id = child.id();
+        let status = tokio::select! {
+            status = child.wait() => status,
+            () = stop.token.cancelled() => {
+                if let Some(process_id) = process_id {
+                    kill_group(process_id);
+                }
+                child.wait().await
+            }
+        };
+        stop.token.cancel();
+        if let Some(process_id) = process_id {
+            // Anything the child left behind in its group goes too.
+            kill_group(process_id);
+        }
+
+        let reason = match status {
+            _ if stop.requested_by_hub.load(Ordering::SeqCst) => "stopped by the hub".to_owned(),
+            Ok(status) => status.to_string(),
+            Err(error) => format!("could not get exit status: {error}"),
+        };
+        tracing::info!(reason, "child process ended");
+        *self
+            .last_exit
+            .lock()
+            .expect("no code panics holding this lock") = Some(reason);
+
+        if let Err(error) = tokio::fs::remove_dir_all(&scratch_dir).await {
+            tracing::warn!(%error, "could not remove a scratch directory");
+        }
     }
 }
 

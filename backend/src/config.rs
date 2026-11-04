@@ -126,6 +126,7 @@ fn host_is_loopback(url: &Url) -> bool {
 pub struct Settings {
     pub paths: PathSettings,
     pub runtimes: RuntimeSettings,
+    pub limits: LimitSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,6 +159,42 @@ impl Default for RuntimeSettings {
         Self {
             bun: "/usr/local/bin/bun".into(),
             node: "/usr/local/bin/node".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LimitSettings {
+    pub max_processes_per_user: usize,
+    pub max_sessions_per_instance: usize,
+    pub max_processes_total: usize,
+    pub max_spawns_per_user_per_minute: usize,
+    pub max_pending_requests_per_session: usize,
+    pub idle_timeout_secs: u64,
+    pub initialize_timeout_secs: u64,
+    pub request_timeout_secs: u64,
+    pub upstream_start_timeout_secs: u64,
+    pub max_body_bytes: usize,
+    pub max_line_bytes: usize,
+    pub output_tail_bytes: usize,
+}
+
+impl Default for LimitSettings {
+    fn default() -> Self {
+        Self {
+            max_processes_per_user: 6,
+            max_sessions_per_instance: 3,
+            max_processes_total: 50,
+            max_spawns_per_user_per_minute: 10,
+            max_pending_requests_per_session: 32,
+            idle_timeout_secs: 600,
+            initialize_timeout_secs: 30,
+            request_timeout_secs: 300,
+            upstream_start_timeout_secs: 15,
+            max_body_bytes: 4_194_304,
+            max_line_bytes: 8_388_608,
+            output_tail_bytes: 65_536,
         }
     }
 }
