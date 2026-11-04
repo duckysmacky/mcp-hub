@@ -1,5 +1,5 @@
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -127,6 +127,15 @@ pub struct Settings {
     pub paths: PathSettings,
     pub runtimes: RuntimeSettings,
     pub limits: LimitSettings,
+    pub network: NetworkSettings,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetworkSettings {
+    /// The host's public IPs: `net_guard` allows them only on ports 443 and 80.
+    pub self_addresses: Vec<IpAddr>,
+    pub allow_http_urls: bool,
 }
 
 #[derive(Debug, Deserialize)]

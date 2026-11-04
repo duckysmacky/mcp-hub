@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod net_guard;
 pub mod process;
 pub mod supervisor;
 
