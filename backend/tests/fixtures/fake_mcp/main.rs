@@ -23,6 +23,7 @@ impl Server {
     async fn call_tool(&self, name: &str, arguments: &Value, stdout: Option<&Stdout>) -> String {
         match name {
             "echo" => arguments.to_string(),
+            "exit" => std::process::exit(arguments["code"].as_i64().unwrap_or(1) as i32),
             "env" => {
                 let env: BTreeMap<String, String> = std::env::vars().collect();
                 serde_json::to_string(&env).unwrap()
@@ -128,8 +129,150 @@ async fn run_stdio(server: Server) {
     }
 }
 
+/// HTTP mode: serves `POST`/`GET`/`DELETE /mcp` like a stateful Streamable HTTP server.
+mod http {
+    use std::{
+        collections::HashSet,
+        convert::Infallible,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use axum::{
+        Json, Router,
+        body::Bytes,
+        extract::State,
+        http::{HeaderMap, StatusCode},
+        response::{
+            IntoResponse, Response,
+            sse::{Event, Sse},
+        },
+        routing::post,
+    };
+    use futures::{StreamExt, stream};
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct App {
+        server: Server,
+        sessions: Arc<Mutex<HashSet<String>>>,
+    }
+
+    static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+
+    fn known_session(app: &App, headers: &HeaderMap) -> Result<(), StatusCode> {
+        let session = headers
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        if app.sessions.lock().unwrap().contains(session) {
+            Ok(())
+        } else {
+            Err(StatusCode::NOT_FOUND)
+        }
+    }
+
+    fn seen_headers(headers: &HeaderMap) -> String {
+        let seen: BTreeMap<&str, &str> = headers
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or("?")))
+            .collect();
+        serde_json::to_string(&seen).unwrap()
+    }
+
+    fn text_result(id: &Value, text: &str) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": { "content": [{ "type": "text", "text": text }] },
+        })
+    }
+
+    async fn handle_post(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
+        if std::env::var("FAKE_REQUIRE_AUTH").is_ok() && !headers.contains_key("authorization") {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        let message: Value = serde_json::from_slice(&body).unwrap();
+        if message["method"] == "initialize" {
+            let session = format!("upstream-{}", NEXT_SESSION.fetch_add(1, Ordering::SeqCst));
+            app.sessions.lock().unwrap().insert(session.clone());
+            let response = app.server.handle(&message, None).await.unwrap();
+            return ([("mcp-session-id", session)], Json(response)).into_response();
+        }
+        if let Err(status) = known_session(&app, &headers) {
+            return status.into_response();
+        }
+        let tool = message["params"]["name"].as_str().unwrap_or_default();
+        match tool {
+            "headers" => Json(text_result(&message["id"], &seen_headers(&headers))).into_response(),
+            "sse" => {
+                let result = text_result(&message["id"], "streamed").to_string();
+                let events = stream::iter([Ok::<_, Infallible>(
+                    Event::default().event("message").data(result),
+                )]);
+                Sse::new(events).into_response()
+            }
+            "redirect" => (
+                StatusCode::FOUND,
+                [("location", "http://127.0.0.1:1/stolen")],
+            )
+                .into_response(),
+            "response_headers" => (
+                [("set-cookie", "upstream=1"), ("x-internal", "secret")],
+                Json(text_result(&message["id"], "with headers")),
+            )
+                .into_response(),
+            _ => match app.server.handle(&message, None).await {
+                Some(response) => Json(response).into_response(),
+                None => StatusCode::ACCEPTED.into_response(),
+            },
+        }
+    }
+
+    async fn handle_get(State(app): State<App>, headers: HeaderMap) -> Response {
+        if let Err(status) = known_session(&app, &headers) {
+            return status.into_response();
+        }
+        let message = json!({ "jsonrpc": "2.0", "method": "notifications/message" }).to_string();
+        let first = stream::iter([Ok::<_, Infallible>(
+            Event::default().event("message").data(message),
+        )]);
+        Sse::new(first.chain(stream::pending())).into_response()
+    }
+
+    async fn handle_delete(State(app): State<App>, headers: HeaderMap) -> Response {
+        if let Err(status) = known_session(&app, &headers) {
+            return status.into_response();
+        }
+        let session = headers["mcp-session-id"].to_str().unwrap();
+        app.sessions.lock().unwrap().remove(session);
+        StatusCode::NO_CONTENT.into_response()
+    }
+
+    pub async fn run(port: u16) {
+        println!("listening on {port}");
+        let router = Router::new()
+            .route(
+                "/mcp",
+                post(handle_post).get(handle_get).delete(handle_delete),
+            )
+            .with_state(App::default());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
+        axum::serve(listener, router).await.unwrap();
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    if std::env::var("FAKE_NO_LISTEN").is_ok() {
+        std::future::pending::<()>().await;
+    }
+    if let Ok(port) = std::env::var("FAKE_HTTP_PORT") {
+        http::run(port.parse().unwrap()).await;
+        return;
+    }
     if let Ok(code) = std::env::var("FAKE_EXIT_AT_START") {
         eprintln!("exiting at start as asked");
         std::process::exit(code.parse().unwrap());

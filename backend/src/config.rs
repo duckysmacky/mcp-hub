@@ -129,6 +129,7 @@ pub struct Settings {
     pub paths: PathSettings,
     pub runtimes: RuntimeSettings,
     pub limits: LimitSettings,
+    pub http_mode: HttpModeSettings,
     pub network: NetworkSettings,
     pub sessions: SessionSettings,
     pub oauth: OAuthSettings,
@@ -191,6 +192,21 @@ impl PasswordKdfSettings {
             memory_kib: self.memory_kib,
             iterations: self.iterations,
             parallelism: self.parallelism,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HttpModeSettings {
+    /// Inclusive range of loopback ports for upstream processes.
+    pub port_range: [u16; 2],
+}
+
+impl Default for HttpModeSettings {
+    fn default() -> Self {
+        Self {
+            port_range: [41000, 41999],
         }
     }
 }

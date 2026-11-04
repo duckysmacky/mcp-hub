@@ -149,6 +149,10 @@ impl ProcessStop {
         self.requested_by_hub.store(true, Ordering::SeqCst);
         self.token.cancel();
     }
+
+    pub fn requested_by_hub(&self) -> bool {
+        self.requested_by_hub.load(Ordering::SeqCst)
+    }
 }
 
 /// What the status page shows about an instance's processes. Outlives each process.

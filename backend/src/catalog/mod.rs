@@ -9,6 +9,7 @@ use std::{
 
 use axum::http::HeaderName;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 const FORBIDDEN_HEADERS: [&str; 4] = [
     "host",
@@ -300,9 +301,49 @@ pub fn template_vars(template: &str) -> Result<Vec<&str>, String> {
     Ok(vars)
 }
 
+/// Fills a header template. `None` if any of its vars has no value.
+pub fn render_template(
+    template: &str,
+    values: &[(String, Zeroizing<String>)],
+) -> Option<Zeroizing<String>> {
+    let mut rendered = Zeroizing::new(String::with_capacity(template.len()));
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let (literal, after_brace) = (&rest[..start], &rest[start + 1..]);
+        let end = after_brace.find('}')?;
+        let var = &after_brace[..end];
+        let (_, value) = values.iter().find(|(name, _)| name == var)?;
+        rendered.push_str(literal);
+        rendered.push_str(value);
+        rest = &after_brace[end + 1..];
+    }
+    rendered.push_str(rest);
+    Some(rendered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renders_header_templates() {
+        let values = [("TOKEN".to_owned(), Zeroizing::new("abc".to_owned()))];
+        assert_eq!(
+            render_template("Bearer {TOKEN}", &values).unwrap().as_str(),
+            "Bearer abc"
+        );
+        assert_eq!(
+            render_template("static", &values).unwrap().as_str(),
+            "static"
+        );
+        assert_eq!(
+            render_template("{TOKEN}-{TOKEN}", &values)
+                .unwrap()
+                .as_str(),
+            "abc-abc"
+        );
+        assert!(render_template("Bearer {MISSING}", &values).is_none());
+    }
 
     const STDIO: &str = r#"
         [[server]]

@@ -1,6 +1,7 @@
 //! Connects MCP clients to child processes. JSON-RPC is forwarded raw: only the
 //! fields the hub needs are read, so new protocol methods and fields pass through.
 
+pub mod http;
 pub mod stdio;
 
 use serde_json::{Value, json};

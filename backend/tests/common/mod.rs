@@ -1,6 +1,14 @@
 #![allow(dead_code)] // Each test crate uses a different part of this module.
 
-use std::{collections::HashMap, path::PathBuf, process::Command, sync::Arc, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    process::Command,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU16, Ordering},
+    },
+};
 
 use mcp_hub::{
     app_state::AppState,
@@ -287,6 +295,11 @@ impl McpApp {
         settings.runtimes.node = fake_mcp_path();
         settings.paths.scratch = scratch.path().to_owned();
         settings.limits.max_spawns_per_user_per_minute = 1000;
+        // Tests in one binary run concurrently, so each app gets its own ports.
+        static NEXT_PORT_BLOCK: AtomicU16 = AtomicU16::new(0);
+        let block = NEXT_PORT_BLOCK.fetch_add(1, Ordering::SeqCst);
+        let first_port = 43000 + block * 4;
+        settings.http_mode.port_range = [first_port, first_port + 3];
         customize(&mut settings);
 
         let parsed = Catalog::parse(catalog).unwrap();

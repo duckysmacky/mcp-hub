@@ -2,6 +2,7 @@
 //! authenticated first, then resolved through the token's user to one instance.
 
 mod auth;
+mod http;
 mod stdio;
 
 use axum::{
@@ -53,6 +54,8 @@ pub enum McpError {
     RateLimited,
     #[error("the hub is at its process limit")]
     Unavailable,
+    #[error("the server keeps crashing")]
+    CoolingDown { retry_after_secs: u64 },
     #[error(transparent)]
     Internal(#[from] ApiError),
 }
@@ -92,6 +95,12 @@ impl IntoResponse for McpError {
             )
                 .into_response(),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, text).into_response(),
+            Self::CoolingDown { retry_after_secs } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, retry_after_secs.to_string())],
+                text,
+            )
+                .into_response(),
             Self::Internal(error) => error.into_response(),
         }
     }
@@ -207,7 +216,12 @@ impl Target<'_> {
 fn start_failure(id: &Value, error: SupervisorError) -> Result<Response, McpError> {
     match error {
         SupervisorError::SpawnRateLimited => Err(McpError::RateLimited),
-        SupervisorError::TooManyProcesses => Err(McpError::Unavailable),
+        SupervisorError::TooManyProcesses | SupervisorError::NoFreePort => {
+            Err(McpError::Unavailable)
+        }
+        SupervisorError::CrashBackoff { retry_after_secs } => {
+            Err(McpError::CoolingDown { retry_after_secs })
+        }
         SupervisorError::Scratch(_) | SupervisorError::Bridge(_) => {
             tracing::error!(%error, "could not start a child process");
             Ok(json_error(id, "could not start the server"))
@@ -252,7 +266,7 @@ async fn handle_post(
     );
     match target.template.mode {
         ServerMode::Stdio => stdio::post(&target, &headers, kind, message).await,
-        ServerMode::Http => Err(McpError::NotFound),
+        ServerMode::Http => http::post(&target, &headers, kind, message).await,
     }
 }
 
@@ -264,7 +278,7 @@ async fn handle_get(
     let target = resolve(&state, &headers, &slug).await?;
     match target.template.mode {
         ServerMode::Stdio => stdio::get(&target, &headers),
-        ServerMode::Http => Err(McpError::NotFound),
+        ServerMode::Http => http::get(&target, &headers).await,
     }
 }
 
@@ -276,7 +290,7 @@ async fn handle_delete(
     let target = resolve(&state, &headers, &slug).await?;
     match target.template.mode {
         ServerMode::Stdio => stdio::delete(&target, &headers),
-        ServerMode::Http => Err(McpError::NotFound),
+        ServerMode::Http => http::delete(&target, &headers).await,
     }
 }
 
