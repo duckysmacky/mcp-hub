@@ -241,6 +241,12 @@ impl Supervisor {
         });
     }
 
+    /// Kills an instance's processes and drops what's kept about it, once it's deleted.
+    pub fn forget_instance(&self, instance_id: i64) {
+        self.stop_instance(instance_id);
+        self.registry().outputs.remove(&instance_id);
+    }
+
     pub fn instance_status(&self, instance_id: i64) -> InstanceStatus {
         let mut registry = self.registry();
         registry.remove_dead_sessions();

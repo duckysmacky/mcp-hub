@@ -38,6 +38,9 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
+    let server_ids: Vec<String> = catalog.servers().map(|server| server.id.clone()).collect();
+    db::instances::sync_with_catalog(&pool, &server_ids).await?;
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM instance_env WHERE instance_id = $1 AND env_var = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2a78a3e186f2ac39c9fc742ba58c4e194128ea5435dc4f08b0f5fc636eaf2b2e"
+}

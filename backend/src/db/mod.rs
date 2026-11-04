@@ -1,3 +1,4 @@
+pub mod instances;
 pub mod users;
 pub mod web_sessions;
 

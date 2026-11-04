@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT env_var, ciphertext FROM instance_env WHERE instance_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "env_var",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "instance_env",
+            "name": "env_var"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ciphertext",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "instance_env",
+            "name": "ciphertext"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "ffb477a19bb37f521f6d8077ca8d2b4b6a268a1b53c1d8dcd5ccb3912d39e8e5"
+}

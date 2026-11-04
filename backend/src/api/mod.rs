@@ -1,5 +1,7 @@
 //! The JSON API for the web UI, under `/api`.
 
+pub mod instances;
+
 use axum::{
     Json, Router,
     extract::{Request, State},
@@ -14,6 +16,7 @@ use crate::{app_state::AppState, auth};
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .nest("/auth", auth::routes())
+        .merge(instances::routes())
         .layer(middleware::from_fn_with_state(state, require_same_origin))
 }
 

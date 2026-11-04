@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO instance_env (instance_id, env_var, ciphertext)\n         VALUES ($1, $2, $3)\n         ON CONFLICT (instance_id, env_var)\n         DO UPDATE SET ciphertext = EXCLUDED.ciphertext, updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3af6b13e1d668a8083eb5a3617f90922ed29bb1fc59c25e82d47df1d78c1c16e"
+}
