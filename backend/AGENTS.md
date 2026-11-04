@@ -97,6 +97,7 @@ POST   /mcp/{slug}                 GET  /mcp/{slug}    DELETE /mcp/{slug}
 
 - **Unit tests** next to the code (`#[cfg(test)]`). Required for `crypto`, `net_guard`, `catalog` validation, and env key validation.
 - **Integration tests** in `tests/` start the real router against a fresh Postgres database per test (`#[sqlx::test]`).
+- **Running tests.** Integration tests need Postgres (`docker compose up -d --wait database`) and `DATABASE_URL` from `.env`. A plain `cargo test` rebuilds the fake server; before a filtered run such as `cargo test --test mcp_stdio`, run `cargo build --example fake_mcp`, or it uses a stale binary.
 - **Fake MCP server.** `tests/fixtures/fake_mcp/` is a small Rust binary speaking stdio MCP (initialize, tools/list, tools/call echo, a deliberate crash, a slow call, an over-long line, stderr spam). Bridge tests use it, so the suite never needs Bun, Node, or the network.
 - OAuth tests cover the full flow: register, authorize, consent, token, refresh rotation, refresh reuse detection, audience mismatch, and PKCE failure.
 
