@@ -3,6 +3,7 @@
 catalog  = "../catalog.example.toml"
 packages = "../.dev/packages"
 scratch  = "/tmp/mcp-hub-dev/scratch"
+static   = "../frontend/build"
 
 [runtimes]
 bun  = "/usr/bin/bun"

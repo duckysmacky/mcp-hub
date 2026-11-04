@@ -12,6 +12,7 @@ pub mod net_guard;
 pub mod oauth;
 pub mod process;
 pub mod supervisor;
+pub mod web;
 
 use axum::{
     Json, Router,
@@ -31,6 +32,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/api", api::routes(state.clone()))
         .merge(oauth::routes())
         .merge(mcp::routes())
+        .merge(web::routes(&state.config.settings.paths.r#static))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         // Only the path: query strings can carry OAuth parameters.
         .layer(TraceLayer::new_for_http().make_span_with(|request: &Request| {

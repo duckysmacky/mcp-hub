@@ -225,6 +225,8 @@ pub struct PathSettings {
     pub catalog: PathBuf,
     pub packages: PathBuf,
     pub scratch: PathBuf,
+    #[serde(rename = "static")]
+    pub r#static: PathBuf,
 }
 
 impl Default for PathSettings {
@@ -233,6 +235,7 @@ impl Default for PathSettings {
             catalog: "/etc/mcp-hub/catalog.toml".into(),
             packages: "/data/packages".into(),
             scratch: "/tmp/mcp-hub/scratch".into(),
+            r#static: "/usr/share/mcp-hub/static".into(),
         }
     }
 }
