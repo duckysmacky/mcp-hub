@@ -265,6 +265,183 @@ pub async fn connect(app: &TestApp, cookie: &str, slug: &str) -> IssuedTokens {
     }
 }
 
+/// An app whose catalog `runtime` is the fake MCP server, so nothing real is needed.
+pub struct McpApp {
+    pub app: TestApp,
+    _scratch: tempfile::TempDir,
+}
+
+impl std::ops::Deref for McpApp {
+    type Target = TestApp;
+
+    fn deref(&self) -> &TestApp {
+        &self.app
+    }
+}
+
+impl McpApp {
+    pub async fn spawn(pool: PgPool, catalog: &str, customize: impl FnOnce(&mut Settings)) -> Self {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut settings = Settings::default();
+        settings.runtimes.bun = fake_mcp_path();
+        settings.runtimes.node = fake_mcp_path();
+        settings.paths.scratch = scratch.path().to_owned();
+        settings.limits.max_spawns_per_user_per_minute = 1000;
+        customize(&mut settings);
+
+        let parsed = Catalog::parse(catalog).unwrap();
+        let bin_scripts = parsed
+            .servers()
+            .map(|server| (server.id.clone(), PathBuf::from("ignored.js")))
+            .collect();
+        let mut state = state_with(pool, config(settings), catalog);
+        state.bin_scripts = Arc::new(bin_scripts);
+        Self {
+            app: TestApp::serve(state).await,
+            _scratch: scratch,
+        }
+    }
+
+    /// Signs up a user and creates a started instance with the given env values.
+    /// Returns the user's cookie and the instance id.
+    pub async fn user_with_instance(
+        &self,
+        username: &str,
+        slug: &str,
+        server_id: &str,
+        env: &[(&str, &str)],
+    ) -> (String, i64) {
+        let cookie = match self
+            .signup(username, "correct horse battery")
+            .await
+            .status()
+        {
+            reqwest::StatusCode::CREATED | reqwest::StatusCode::CONFLICT => {
+                self.login(username, "correct horse battery").await
+            }
+            status => panic!("signup failed: {status}"),
+        };
+        let created = self
+            .post(
+                "/api/instances",
+                Some(&cookie),
+                json!({ "server_id": server_id, "slug": slug }),
+            )
+            .await;
+        assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+        let id = created.json::<Value>().await.unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        for (var, value) in env {
+            let response = self
+                .send_json(
+                    reqwest::Method::PUT,
+                    &format!("/api/instances/{id}/env/{var}"),
+                    Some(&cookie),
+                    json!({ "value": value }),
+                )
+                .await;
+            assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT, "{var}");
+        }
+        self.post(
+            &format!("/api/instances/{id}/start"),
+            Some(&cookie),
+            json!({}),
+        )
+        .await;
+        (cookie, id)
+    }
+
+    pub async fn mcp_post(
+        &self,
+        slug: &str,
+        token: Option<&str>,
+        session: Option<&str>,
+        body: &Value,
+    ) -> Response {
+        let mut request = self
+            .client()
+            .post(format!("{}/mcp/{slug}", self.address))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(body.to_string());
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        if let Some(session) = session {
+            request = request.header("mcp-session-id", session);
+        }
+        request.send().await.unwrap()
+    }
+
+    /// Initializes a session and returns its id and the `initialize` result.
+    pub async fn initialize(&self, slug: &str, token: &str) -> (String, Value) {
+        let response = self
+            .mcp_post(slug, Some(token), None, &initialize_message())
+            .await;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let session = response.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        (session, read_json_rpc(response).await)
+    }
+
+    /// Calls a tool of the fake server and returns its text output.
+    pub async fn call_tool(
+        &self,
+        slug: &str,
+        token: &str,
+        session: &str,
+        tool: &str,
+        arguments: Value,
+    ) -> Response {
+        self.mcp_post(
+            slug,
+            Some(token),
+            Some(session),
+            &tool_call(tool, arguments),
+        )
+        .await
+    }
+}
+
+pub fn initialize_message() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": { "sampling": {}, "elicitation": {}, "roots": {}, "experimental": {} },
+            "clientInfo": { "name": "test", "version": "1" },
+        },
+    })
+}
+
+pub fn tool_call(tool: &str, arguments: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": tool, "arguments": arguments },
+    })
+}
+
+/// Reads a JSON-RPC message from a JSON body or from an SSE `data:` line.
+pub async fn read_json_rpc(response: Response) -> Value {
+    let text = response.text().await.unwrap();
+    let payload = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data:"))
+        .unwrap_or(&text);
+    serde_json::from_str(payload.trim()).unwrap()
+}
+
+pub fn tool_text(message: &Value) -> &str {
+    message["result"]["content"][0]["text"].as_str().unwrap()
+}
+
 /// Path of the fake MCP server. A plain `cargo test` builds it; it's built here only
 /// for a filtered run that skipped examples.
 pub fn fake_mcp_path() -> PathBuf {

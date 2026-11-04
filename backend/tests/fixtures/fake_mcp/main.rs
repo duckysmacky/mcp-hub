@@ -130,5 +130,9 @@ async fn run_stdio(server: Server) {
 
 #[tokio::main]
 async fn main() {
+    if let Ok(code) = std::env::var("FAKE_EXIT_AT_START") {
+        eprintln!("exiting at start as asked");
+        std::process::exit(code.parse().unwrap());
+    }
     run_stdio(Server::default()).await;
 }
