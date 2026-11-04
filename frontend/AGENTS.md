@@ -26,14 +26,13 @@ frontend/src/
 │   └── session.svelte.ts    # current user state (runes-based)
 └── routes/
     ├── +layout.svelte / +layout.ts   # ssr = false, auth guard
-    ├── login/  register/              # register needs an invite code unless open registration
+    ├── login/  signup/                # signup shown only when GET /api/auth/config says it's enabled
     ├── instances/                     # list
-    ├── instances/new/                 # pick template -> slug -> auth mode -> env
+    ├── instances/new/                 # pick server -> slug -> runtime (bun/node) -> env values
     ├── instances/[id]/                # env, start/stop/restart, status, tool filter, connection URL
     ├── grants/                        # connected clients per instance, revoke
     ├── consent/                       # OAuth consent page (?request=<pending id>)
-    ├── settings/                      # change password
-    └── admin/                         # invites, users (admins only)
+    └── settings/                      # change password
 ```
 
 ## Rules
@@ -44,16 +43,15 @@ frontend/src/
 - Treat the backend as the only authority for permissions. Hiding a button is UX, not security.
 
 ### Secrets UI (write-only, like GitHub secrets)
-- An env value with `kind = "secret"` is **never** displayed, prefilled, or sent back by the API. The UI shows "Set" plus the date it was set, with a **Replace** action and a **Remove** action.
-- Secret inputs use `type="password"` and `autocomplete="new-password"`, and are cleared from component state immediately after a successful save.
-- `plain` and `url` values may be shown and edited normally.
-- Show which keys are required by the selected auth mode, and keep **Start** disabled until all of them are set (mirror the backend check; the backend still enforces it).
+- **Every** env value is write-only in v2: never displayed, prefilled, or sent back by the API. The UI shows "Set" plus the date it was set, with a **Replace** action and a **Remove** action.
+- Adding a value: a dropdown of the server's `env_vars` (minus the ones already set) plus a value input. Inputs use `type="password"` and `autocomplete="new-password"` and are cleared from component state immediately after a successful save.
+- Vars the catalog no longer lists (`in_catalog = false`) are shown as "no longer used", with Remove only.
 
 ### Consent page (`/consent`)
 It's the anti-phishing barrier for OAuth, so it must show clearly:
 - the **client name** (as registered, marked as self-reported),
 - the **redirect URI host**, prominently. When the redirect is `localhost`/`127.0.0.1`, show a warning that a local app on this machine will receive access,
-- **which instance** (slug and template name) access is being granted to,
+- **which instance** (slug and catalog server id) access is being granted to,
 - Approve and Deny buttons of equal visual weight. Never auto-approve.
 
 If the user isn't logged in, send them to `/login?next=/consent?request=...` and come back.
