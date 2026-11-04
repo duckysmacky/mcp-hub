@@ -196,6 +196,75 @@ pub async fn start_authorization(
         .to_owned()
 }
 
+pub const PKCE_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+pub const PKCE_CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+/// Approves a pending authorization and returns the code from the redirect.
+pub async fn approve(app: &TestApp, cookie: &str, pending: &str) -> String {
+    let response = app
+        .post(
+            &format!("/api/oauth/pending/{pending}/approve"),
+            Some(cookie),
+            json!({}),
+        )
+        .await;
+    assert!(response.status().is_success(), "{}", response.status());
+    let body: Value = response.json().await.unwrap();
+    let location = url::Url::parse(body["redirect_url"].as_str().unwrap()).unwrap();
+    location
+        .query_pairs()
+        .find(|(name, _)| name == "code")
+        .unwrap()
+        .1
+        .into_owned()
+}
+
+pub async fn post_token(app: &TestApp, form: &[(&str, &str)]) -> Response {
+    app.client()
+        .post(format!("{}/oauth/token", app.address))
+        .form(form)
+        .send()
+        .await
+        .unwrap()
+}
+
+pub async fn exchange_code(app: &TestApp, client_id: &str, code: &str, slug: &str) -> Response {
+    let resource = format!("{}/mcp/{slug}", app.public_url());
+    post_token(
+        app,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", CLIENT_REDIRECT),
+            ("client_id", client_id),
+            ("code_verifier", PKCE_VERIFIER),
+            ("resource", &resource),
+        ],
+    )
+    .await
+}
+
+pub struct IssuedTokens {
+    pub client_id: String,
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+/// The whole OAuth flow, as a client and the user would drive it.
+pub async fn connect(app: &TestApp, cookie: &str, slug: &str) -> IssuedTokens {
+    let client_id = register_client(app).await;
+    let pending = start_authorization(app, &client_id, slug, PKCE_CHALLENGE).await;
+    let code = approve(app, cookie, &pending).await;
+    let response = exchange_code(app, &client_id, &code, slug).await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    IssuedTokens {
+        client_id,
+        access_token: body["access_token"].as_str().unwrap().to_owned(),
+        refresh_token: body["refresh_token"].as_str().unwrap().to_owned(),
+    }
+}
+
 /// Path of the fake MCP server. A plain `cargo test` builds it; it's built here only
 /// for a filtered run that skipped examples.
 pub fn fake_mcp_path() -> PathBuf {

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_codes SET used_at = now(), wrapped_dek = NULL\n         WHERE id = $1 AND used_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4d88d4ca263d589921373c2996c20098f40526b63e3d963c2c9128dfc45162f1"
+}

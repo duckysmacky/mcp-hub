@@ -3,6 +3,7 @@
 pub mod authorize;
 pub mod consent;
 pub mod register;
+pub mod token;
 
 use axum::{
     Json, Router,
@@ -30,6 +31,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/oauth/register", post(register::register))
         .route("/oauth/authorize", get(authorize::authorize))
+        .route("/oauth/token", post(token::token))
 }
 
 /// The canonical resource URL of a slug.

@@ -1,0 +1,128 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT token.id, token.grant_id, token.wrapped_dek,\n                  token.expires_at <= now() AS \"is_expired!\",\n                  token.used_at IS NOT NULL AS \"is_used!\",\n                  token.revoked_at IS NOT NULL AS \"is_revoked!\",\n                  grants.revoked_at IS NOT NULL AS \"grant_is_revoked!\",\n                  grants.client_id, grants.user_id, grants.resource, grants.scope\n           FROM oauth_tokens AS token\n           JOIN oauth_grants AS grants ON grants.id = token.grant_id\n           WHERE token.token_hash = $1 AND token.kind = 'refresh'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "grant_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "grant_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "wrapped_dek",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "wrapped_dek"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "is_expired!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "is_used!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "is_revoked!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "grant_is_revoked!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "client_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "client_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "resource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "resource"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "scope",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "scope"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3bb601fa613faca8a7a5f58f27b4721870095217d8d7a1efdbe31b78206cf5f4"
+}

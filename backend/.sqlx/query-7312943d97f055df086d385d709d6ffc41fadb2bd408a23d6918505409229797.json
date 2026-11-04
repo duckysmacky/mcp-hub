@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT token.id, grants.user_id, grants.instance_id, grants.resource, token.wrapped_dek\n         FROM oauth_tokens AS token\n         JOIN oauth_grants AS grants ON grants.id = token.grant_id\n         WHERE token.token_hash = $1\n           AND token.kind = 'access'\n           AND token.expires_at > now()\n           AND token.revoked_at IS NULL\n           AND grants.revoked_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "instance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "instance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "resource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "resource"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "wrapped_dek",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "wrapped_dek"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7312943d97f055df086d385d709d6ffc41fadb2bd408a23d6918505409229797"
+}

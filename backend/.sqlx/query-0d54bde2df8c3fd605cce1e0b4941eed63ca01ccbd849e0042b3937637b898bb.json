@@ -1,0 +1,145 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code.id, code.grant_id, code.redirect_uri, code.code_challenge, code.resource,\n                  code.wrapped_dek,\n                  code.expires_at <= now() AS \"is_expired!\",\n                  code.used_at IS NOT NULL AS \"is_used!\",\n                  grants.revoked_at IS NOT NULL AS \"grant_is_revoked!\",\n                  grants.client_id, grants.user_id, grants.scope\n           FROM oauth_codes AS code\n           JOIN oauth_grants AS grants ON grants.id = code.grant_id\n           WHERE code.code_hash = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "grant_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "grant_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "redirect_uri",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "redirect_uri"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "code_challenge",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "code_challenge"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "resource",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "resource"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "wrapped_dek",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_codes",
+            "name": "wrapped_dek"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "is_expired!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_used!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "grant_is_revoked!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "client_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "client_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "scope",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "scope"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      null,
+      null,
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0d54bde2df8c3fd605cce1e0b4941eed63ca01ccbd849e0042b3937637b898bb"
+}

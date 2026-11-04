@@ -274,9 +274,32 @@ fn open(
         .map_err(|_| CryptoError::Decrypt)
 }
 
+/// Checks a PKCE verifier against its S256 challenge (RFC 7636).
+pub fn pkce_matches(verifier: &str, challenge: &str) -> bool {
+    let is_well_formed = (43..=128).contains(&verifier.len())
+        && verifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c));
+    is_well_formed && URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())) == challenge
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pkce_matches_the_rfc_7636_example() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        assert!(pkce_matches(verifier, challenge));
+        assert!(!pkce_matches(
+            "wrong-verifier-wrong-verifier-wrong-verifier-1",
+            challenge
+        ));
+        assert!(!pkce_matches("short", challenge));
+        assert!(!pkce_matches(&"a".repeat(129), challenge));
+        assert!(!pkce_matches(&format!("{verifier} "), challenge));
+    }
 
     const FAST: KdfParams = KdfParams {
         memory_kib: 256,
