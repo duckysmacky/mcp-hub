@@ -1,6 +1,7 @@
 // These mirror the backend's DTOs by hand: change them together.
 
-export type Runtime = 'bun' | 'node';
+export const RUNTIMES = ['bun', 'node'] as const;
+export type Runtime = (typeof RUNTIMES)[number];
 export type ServerMode = 'stdio' | 'http';
 
 export interface User {
