@@ -13,7 +13,7 @@ use std::{
 use mcp_hub::{
     app_state::AppState,
     build_router,
-    catalog::Catalog,
+    catalog::{Catalog, install::ResolvedServer},
     config::{Config, Settings},
     supervisor::Supervisor,
 };
@@ -305,7 +305,13 @@ impl McpApp {
         let parsed = Catalog::parse(catalog).unwrap();
         let bin_scripts = parsed
             .servers()
-            .map(|server| (server.id.clone(), PathBuf::from("ignored.js")))
+            .map(|server| {
+                let resolved = ResolvedServer {
+                    script: PathBuf::from("ignored.js"),
+                    python_path: None,
+                };
+                (server.id.clone(), resolved)
+            })
             .collect();
         let mut state = state_with(pool, config(settings), catalog);
         state.bin_scripts = Arc::new(bin_scripts);

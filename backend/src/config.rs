@@ -245,6 +245,8 @@ impl Default for PathSettings {
 pub struct RuntimeSettings {
     pub bun: PathBuf,
     pub node: PathBuf,
+    pub uv: PathBuf,
+    pub pip: PathBuf,
 }
 
 impl Default for RuntimeSettings {
@@ -252,6 +254,8 @@ impl Default for RuntimeSettings {
         Self {
             bun: "/usr/local/bin/bun".into(),
             node: "/usr/local/bin/node".into(),
+            uv: "/usr/local/bin/uv".into(),
+            pip: "/usr/local/bin/pip".into(),
         }
     }
 }

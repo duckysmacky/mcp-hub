@@ -8,3 +8,5 @@ static   = "../frontend/build"
 [runtimes]
 bun  = "/usr/bin/bun"
 node = "/usr/bin/node"
+uv   = "/usr/bin/uv"
+pip  = "/usr/bin/pip3"

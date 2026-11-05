@@ -29,8 +29,9 @@ async fn start(limits: SessionLimits, env: Vec<EnvValue>) -> Harness {
     let scratch = create_scratch_dir(root.path(), "session").await.unwrap();
     let binary = common::fake_mcp_path();
     let command = build_child_command(&ChildSpec {
-        runtime_binary: &binary,
+        runtime_binary: Some(&binary),
         script: Path::new("ignored.js"),
+        python_path: None,
         args: &[],
         env: &env,
         scratch_dir: &scratch,

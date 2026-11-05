@@ -17,7 +17,7 @@ use crate::{
         http::{UpstreamParams, UpstreamProcess},
         stdio::{BridgeError, BridgeSession, SessionLimits, SpawnParams},
     },
-    catalog::{HttpSettings, RuntimeKind},
+    catalog::{HttpSettings, RuntimeKind, install::ResolvedServer},
     config::{Config, RuntimeSettings},
     process::{ChildSpec, EnvValue, InstanceOutput, build_child_command, create_scratch_dir},
 };
@@ -50,7 +50,7 @@ pub struct StartRequest<'a> {
     pub user_id: i64,
     pub instance_id: i64,
     pub runtime: RuntimeKind,
-    pub script: &'a Path,
+    pub server: &'a ResolvedServer,
     pub args: &'a [String],
     pub env: Vec<EnvValue>,
     /// The instance's secret values, so that output can be redacted against them.
@@ -62,7 +62,7 @@ pub struct StartUpstream<'a> {
     pub user_id: i64,
     pub instance_id: i64,
     pub runtime: RuntimeKind,
-    pub script: &'a Path,
+    pub server: &'a ResolvedServer,
     pub args: &'a [String],
     pub http: &'a HttpSettings,
     pub env: Vec<EnvValue>,
@@ -271,7 +271,8 @@ impl Supervisor {
             .map_err(SupervisorError::Scratch)?;
         let command = build_child_command(&ChildSpec {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
-            script: request.script,
+            script: &request.server.script,
+            python_path: request.server.python_path.as_deref(),
             args: request.args,
             env: &request.env,
             scratch_dir: &scratch_dir,
@@ -333,7 +334,8 @@ impl Supervisor {
             .map_err(SupervisorError::Scratch)?;
         let command = build_child_command(&ChildSpec {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
-            script: request.script,
+            script: &request.server.script,
+            python_path: request.server.python_path.as_deref(),
             args: request.args,
             env: &env,
             scratch_dir: &scratch_dir,
@@ -559,9 +561,11 @@ impl Supervisor {
     }
 }
 
-fn runtime_binary(runtimes: &RuntimeSettings, runtime: RuntimeKind) -> &Path {
+/// `None` for Python: an installed entry point runs itself through its shebang.
+fn runtime_binary(runtimes: &RuntimeSettings, runtime: RuntimeKind) -> Option<&Path> {
     match runtime {
-        RuntimeKind::Bun => &runtimes.bun,
-        RuntimeKind::Node => &runtimes.node,
+        RuntimeKind::Bun => Some(&runtimes.bun),
+        RuntimeKind::Node => Some(&runtimes.node),
+        RuntimeKind::Uv | RuntimeKind::Pip => None,
     }
 }

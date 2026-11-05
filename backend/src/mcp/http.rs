@@ -97,7 +97,7 @@ async fn initialize(
             user_id: target.auth.user_id,
             instance_id: target.instance.id,
             runtime: target.template.runtime,
-            script: target.script()?,
+            server: target.resolved_server()?,
             args: &target.template.bin_args,
             http,
             env: declared_process_env(target.template, values),

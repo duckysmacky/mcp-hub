@@ -18,7 +18,7 @@ use serde_json::Value;
 use crate::{
     app_state::AppState,
     bridge::json_rpc_error,
-    catalog::{ServerMode, ServerTemplate},
+    catalog::{ServerMode, ServerTemplate, install::ResolvedServer},
     crypto, db,
     db::instances::Instance,
     error::ApiError,
@@ -211,11 +211,10 @@ impl Target<'_> {
         Ok(())
     }
 
-    fn script(&self) -> Result<&std::path::Path, McpError> {
+    fn resolved_server(&self) -> Result<&ResolvedServer, McpError> {
         self.state
             .bin_scripts
             .get(&self.template.id)
-            .map(std::path::PathBuf::as_path)
             .ok_or(McpError::NotFound)
     }
 }

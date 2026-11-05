@@ -1,8 +1,9 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use mcp_hub::{
     bridge::stdio::BridgeSession,
     catalog::RuntimeKind,
+    catalog::install::ResolvedServer,
     config::{LimitSettings, Settings},
     supervisor::{StartRequest, Supervisor, SupervisorError},
 };
@@ -30,7 +31,10 @@ async fn start(
             user_id,
             instance_id,
             runtime: RuntimeKind::Bun,
-            script: Path::new("ignored.js"),
+            server: &ResolvedServer {
+                script: "ignored.js".into(),
+                python_path: None,
+            },
             args: &[],
             env: Vec::new(),
             secrets: Vec::new(),

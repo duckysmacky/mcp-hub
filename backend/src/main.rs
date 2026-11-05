@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let bin_scripts = install_all(
         &catalog,
         &config.settings.paths.packages,
-        &config.settings.runtimes.bun,
+        &config.settings.runtimes,
     )
     .await?;
 

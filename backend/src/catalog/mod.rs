@@ -47,6 +47,14 @@ pub enum ServerMode {
 pub enum RuntimeKind {
     Bun,
     Node,
+    Uv,
+    Pip,
+}
+
+impl RuntimeKind {
+    pub fn is_python(self) -> bool {
+        matches!(self, Self::Uv | Self::Pip)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -149,6 +157,15 @@ pub struct ServerTemplate {
 }
 
 impl ServerTemplate {
+    /// The package's name and exact version, by the rules of its runtime's registry.
+    pub fn package_parts(&self) -> Result<(&str, &str), String> {
+        if self.runtime.is_python() {
+            split_python_package_spec(&self.package)
+        } else {
+            split_package_spec(&self.package)
+        }
+    }
+
     pub fn env_spec(&self, name: &str) -> Option<&EnvSpec> {
         self.env.iter().find(|spec| spec.name == name)
     }
@@ -223,7 +240,17 @@ fn validate_server(server: &ServerTemplate) -> Result<(), String> {
     if !is_valid_server_id(&server.id) {
         return Err("id must match ^[a-z0-9][a-z0-9-]{0,31}$".to_owned());
     }
-    split_package_spec(&server.package)?;
+    server.package_parts()?;
+    if server.runtime.is_python() {
+        // Python packages have no manifest to pick a default entry point from.
+        let bin = server
+            .bin
+            .as_deref()
+            .ok_or("Python servers must set `bin`")?;
+        if bin.is_empty() || bin.contains('/') || bin.starts_with('.') {
+            return Err(format!("invalid bin name {bin}"));
+        }
+    }
 
     let mut seen = HashSet::new();
     for spec in &server.env {
@@ -335,6 +362,31 @@ pub fn split_package_spec(spec: &str) -> Result<(&str, &str), String> {
         return Err(format!("invalid package name {name}"));
     }
     if !is_exact_version(version) {
+        return Err(format!(
+            "package {spec} must pin an exact version like 1.2.3"
+        ));
+    }
+    Ok((name, version))
+}
+
+/// Splits `name@exact-version` for PyPI. Only a plain version passes (no `==`, ranges or
+/// URLs), and the leading alphanumeric keeps the name from being read as an option.
+pub fn split_python_package_spec(spec: &str) -> Result<(&str, &str), String> {
+    let (name, version) = spec
+        .rsplit_once('@')
+        .ok_or_else(|| format!("package {spec} must be name@exact-version"))?;
+    let name_is_valid = name.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    if !name_is_valid {
+        return Err(format!("invalid package name {name}"));
+    }
+    let version_is_exact = version.starts_with(|c: char| c.is_ascii_digit())
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.');
+    if !version_is_exact {
         return Err(format!(
             "package {spec} must pin an exact version like 1.2.3"
         ));
@@ -558,6 +610,51 @@ mod tests {
             "@scope@1.2.3",
         ] {
             assert!(split_package_spec(spec).is_err(), "{spec}");
+        }
+    }
+
+    #[test]
+    fn python_packages_pin_exact_versions_and_name_a_bin() {
+        for spec in [
+            "a@1.2.3",
+            "mcp_server-Time@2024.1",
+            "a.b@1.0rc1",
+            "a@1.0.post1",
+        ] {
+            assert!(split_python_package_spec(spec).is_ok(), "{spec}");
+        }
+        for spec in [
+            "a",
+            "a@latest",
+            "a@>=1.0",
+            "a@~=1.0",
+            "a@==1.0",
+            "a@1.*",
+            "a@1.0,<2",
+            "-e@1.0",
+            "--index-url@1.0",
+            "../a@1.0",
+            "a@https://example.com/a.whl",
+        ] {
+            assert!(split_python_package_spec(spec).is_err(), "{spec}");
+        }
+
+        let server = |runtime: &str, bin: &str| {
+            format!(
+                r#"
+                [[server]]
+                id = "demo"
+                mode = "stdio"
+                runtime = "{runtime}"
+                package = "demo@1.0"
+                {bin}
+                "#
+            )
+        };
+        for runtime in ["uv", "pip"] {
+            assert!(Catalog::parse(&server(runtime, r#"bin = "demo""#)).is_ok());
+            assert!(Catalog::parse(&server(runtime, "")).is_err());
+            assert!(Catalog::parse(&server(runtime, r#"bin = "../python""#)).is_err());
         }
     }
 

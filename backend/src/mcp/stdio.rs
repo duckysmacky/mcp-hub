@@ -62,7 +62,7 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
             user_id: target.auth.user_id,
             instance_id: target.instance.id,
             runtime: target.template.runtime,
-            script: target.script()?,
+            server: target.resolved_server()?,
             args: &target.template.bin_args,
             env: declared_process_env(target.template, values),
             secrets,

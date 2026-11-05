@@ -35,8 +35,11 @@ const REDACTED: &str = "[redacted]";
 pub type EnvValue = (String, Zeroizing<String>);
 
 pub struct ChildSpec<'a> {
-    pub runtime_binary: &'a Path,
+    /// `None` runs `script` itself. Python entry points do, and write no bytecode.
+    pub runtime_binary: Option<&'a Path>,
     pub script: &'a Path,
+    /// A pip server's packages. Set by the hub; users can't name `PYTHON*` vars.
+    pub python_path: Option<&'a Path>,
     pub args: &'a [String],
     /// Must come from [`declared_process_env`], plus the hub's own port var.
     pub env: &'a [EnvValue],
@@ -49,9 +52,15 @@ pub struct ChildSpec<'a> {
 /// `PR_SET_PDEATHSIG` fires when the *thread* that spawned the child exits, and
 /// blocking-pool threads exit when idle, which would kill the child.
 pub fn build_child_command(spec: &ChildSpec<'_>) -> Command {
-    let mut command = Command::new(spec.runtime_binary);
+    let mut command = match spec.runtime_binary {
+        Some(binary) => {
+            let mut command = Command::new(binary);
+            command.arg(spec.script);
+            command
+        }
+        None => Command::new(spec.script),
+    };
     command
-        .arg(spec.script)
         .args(spec.args)
         .env_clear()
         .envs(
@@ -61,12 +70,17 @@ pub fn build_child_command(spec: &ChildSpec<'_>) -> Command {
         )
         .env("PATH", GATEWAY_PATH)
         .env("HOME", spec.scratch_dir)
+        .envs(spec.python_path.map(|path| ("PYTHONPATH", path)))
         .current_dir(spec.scratch_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
+    if spec.runtime_binary.is_none() {
+        // The packages directory is shared, so children must not write to it.
+        command.env("PYTHONDONTWRITEBYTECODE", "1");
+    }
     // SAFETY: the closure runs between fork and exec, so it may only make
     // async-signal-safe calls. It makes one prctl syscall and allocates nothing.
     unsafe {
@@ -293,6 +307,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn python_entry_points_run_themselves_with_gateway_set_vars() {
+        let scratch = tempfile::tempdir().unwrap();
+        let script = scratch.path().join("entry.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"args=$*\"\nenv\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let output = build_child_command(&ChildSpec {
+            runtime_binary: None,
+            script: &script,
+            python_path: Some(Path::new("/packages/demo/site")),
+            args: &["--flag".to_owned()],
+            env: &[],
+            scratch_dir: scratch.path(),
+        })
+        .output()
+        .await
+        .unwrap();
+
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("args=--flag"), "{text}");
+        assert!(text.contains("PYTHONPATH=/packages/demo/site"), "{text}");
+        assert!(text.contains("PYTHONDONTWRITEBYTECODE=1"), "{text}");
+    }
+
+    #[tokio::test]
     async fn child_sees_only_the_given_env_and_an_empty_cwd() {
         let scratch = tempfile::tempdir().unwrap();
         let script = scratch.path().join("script.sh");
@@ -302,8 +341,9 @@ mod tests {
 
         let env = [value("ALLOWED", "yes")];
         let output = build_child_command(&ChildSpec {
-            runtime_binary: Path::new("/bin/sh"),
+            runtime_binary: Some(Path::new("/bin/sh")),
             script: &script,
+            python_path: None,
             args: &[],
             env: &env,
             scratch_dir: work.path(),
@@ -335,8 +375,9 @@ mod tests {
         std::fs::write(&script, "sleep 30 & wait\n").unwrap();
 
         let mut child = build_child_command(&ChildSpec {
-            runtime_binary: Path::new("/bin/sh"),
+            runtime_binary: Some(Path::new("/bin/sh")),
             script: &script,
+            python_path: None,
             args: &[],
             env: &[],
             scratch_dir: work.path(),
