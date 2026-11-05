@@ -54,6 +54,7 @@ pub async fn authenticate(
     if record.resource != resource_url(&state.config.public_url, slug) {
         return Err(reject(true));
     }
+    db::oauth::touch_grant(&state.pool, record.grant_id).await?;
     Ok(Authenticated {
         user_id: record.user_id,
         instance_id: record.instance_id,

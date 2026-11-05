@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT grants.id, grants.instance_id, instance.slug, instance.server_id,\n                  client.client_name, client.client_uri, client.logo_uri,\n                  client.redirect_uris AS \"redirect_uris: Json<Vec<String>>\",\n                  grants.created_at, grants.last_used_at\n           FROM oauth_grants AS grants\n           JOIN instances AS instance ON instance.id = grants.instance_id\n           JOIN oauth_clients AS client ON client.client_id = grants.client_id\n           WHERE grants.user_id = $1 AND grants.revoked_at IS NULL\n           ORDER BY grants.created_at DESC, grants.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "instance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "instance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "server_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "server_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "client_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_clients",
+            "name": "client_name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "client_uri",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_clients",
+            "name": "client_uri"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "logo_uri",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_clients",
+            "name": "logo_uri"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "redirect_uris: Json<Vec<String>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "oauth_clients",
+            "name": "redirect_uris"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "last_used_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "621884c3eecf66a49b43d5ed17fa6a4658b35d2122f437b236a7936acbe3e535"
+}

@@ -1,4 +1,5 @@
 use sqlx::{PgPool, types::Json};
+use time::OffsetDateTime;
 
 use crate::{crypto::CryptoError, error::ApiError};
 
@@ -37,17 +38,23 @@ pub struct NewCode<'a> {
     pub ttl_secs: u64,
 }
 
-pub async fn create_client(
-    pool: &PgPool,
-    client_id: &str,
-    client_name: Option<&str>,
-    redirect_uris: &[String],
-) -> Result<(), sqlx::Error> {
+pub struct NewClient<'a> {
+    pub client_id: &'a str,
+    pub client_name: Option<&'a str>,
+    pub client_uri: Option<&'a str>,
+    pub logo_uri: Option<&'a str>,
+    pub redirect_uris: &'a [String],
+}
+
+pub async fn create_client(pool: &PgPool, client: NewClient<'_>) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "INSERT INTO oauth_clients (client_id, client_name, redirect_uris) VALUES ($1, $2, $3)",
-        client_id,
-        client_name,
-        Json(redirect_uris) as _,
+        "INSERT INTO oauth_clients (client_id, client_name, client_uri, logo_uri, redirect_uris)
+         VALUES ($1, $2, $3, $4, $5)",
+        client.client_id,
+        client.client_name,
+        client.client_uri,
+        client.logo_uri,
+        Json(client.redirect_uris) as _,
     )
     .execute(pool)
     .await?;
@@ -212,6 +219,7 @@ pub struct RefreshRecord {
 /// What a bearer token grants. The caller still has to check the audience.
 pub struct AccessRecord {
     pub id: i64,
+    pub grant_id: i64,
     pub user_id: i64,
     pub instance_id: i64,
     pub resource: String,
@@ -362,7 +370,8 @@ pub async fn find_access_token(
 ) -> Result<Option<AccessRecord>, sqlx::Error> {
     sqlx::query_as!(
         AccessRecord,
-        "SELECT token.id, grants.user_id, grants.instance_id, grants.resource, token.wrapped_dek
+        "SELECT token.id, token.grant_id, grants.user_id, grants.instance_id, grants.resource,
+                token.wrapped_dek
          FROM oauth_tokens AS token
          JOIN oauth_grants AS grants ON grants.id = token.grant_id
          WHERE token.token_hash = $1
@@ -371,6 +380,105 @@ pub async fn find_access_token(
            AND token.revoked_at IS NULL
            AND grants.revoked_at IS NULL",
         token_hash,
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Notes that a grant is in use, at most once a minute: this runs on every MCP request.
+pub async fn touch_grant(pool: &PgPool, grant_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE oauth_grants SET last_used_at = now()
+         WHERE id = $1
+           AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
+        grant_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub struct RevocableToken {
+    pub id: i64,
+    pub kind: String,
+    pub grant_id: i64,
+    pub client_id: String,
+    pub user_id: i64,
+    pub instance_id: i64,
+}
+
+pub async fn find_token(
+    pool: &PgPool,
+    token_hash: &[u8],
+) -> Result<Option<RevocableToken>, sqlx::Error> {
+    sqlx::query_as!(
+        RevocableToken,
+        "SELECT token.id, token.kind, token.grant_id, grants.client_id, grants.user_id,
+                grants.instance_id
+         FROM oauth_tokens AS token
+         JOIN oauth_grants AS grants ON grants.id = token.grant_id
+         WHERE token.token_hash = $1",
+        token_hash,
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn revoke_token(pool: &PgPool, token_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        token_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub struct GrantDetails {
+    pub id: i64,
+    pub instance_id: i64,
+    pub slug: String,
+    pub server_id: String,
+    pub client_name: Option<String>,
+    pub client_uri: Option<String>,
+    pub logo_uri: Option<String>,
+    pub redirect_uris: Json<Vec<String>>,
+    pub created_at: OffsetDateTime,
+    pub last_used_at: Option<OffsetDateTime>,
+}
+
+/// The user's active grants.
+pub async fn list_grants(pool: &PgPool, user_id: i64) -> Result<Vec<GrantDetails>, sqlx::Error> {
+    sqlx::query_as!(
+        GrantDetails,
+        r#"SELECT grants.id, grants.instance_id, instance.slug, instance.server_id,
+                  client.client_name, client.client_uri, client.logo_uri,
+                  client.redirect_uris AS "redirect_uris: Json<Vec<String>>",
+                  grants.created_at, grants.last_used_at
+           FROM oauth_grants AS grants
+           JOIN instances AS instance ON instance.id = grants.instance_id
+           JOIN oauth_clients AS client ON client.client_id = grants.client_id
+           WHERE grants.user_id = $1 AND grants.revoked_at IS NULL
+           ORDER BY grants.created_at DESC, grants.id DESC"#,
+        user_id,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Deletes a user's grant, along with its codes, tokens and their DEK wraps. Returns the
+/// instance it was for, or `None` if the user has no such grant.
+pub async fn delete_grant(
+    pool: &PgPool,
+    user_id: i64,
+    grant_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "DELETE FROM oauth_grants
+         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+         RETURNING instance_id",
+        grant_id,
+        user_id,
     )
     .fetch_optional(pool)
     .await

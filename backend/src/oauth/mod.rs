@@ -3,6 +3,7 @@
 pub mod authorize;
 pub mod consent;
 pub mod register;
+pub mod revoke;
 pub mod token;
 
 use axum::{
@@ -32,6 +33,7 @@ pub fn routes() -> Router<AppState> {
         .route("/oauth/register", post(register::register))
         .route("/oauth/authorize", get(authorize::authorize))
         .route("/oauth/token", post(token::token))
+        .route("/oauth/revoke", post(revoke::revoke))
 }
 
 /// The canonical resource URL of a slug.
@@ -54,6 +56,7 @@ async fn authorization_server_metadata(State(state): State<AppState>) -> Json<Va
         "authorization_endpoint": format!("{issuer}/oauth/authorize"),
         "token_endpoint": format!("{issuer}/oauth/token"),
         "registration_endpoint": format!("{issuer}/oauth/register"),
+        "revocation_endpoint": format!("{issuer}/oauth/revoke"),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],

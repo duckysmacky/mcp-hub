@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_grants SET last_used_at = now()\n         WHERE id = $1\n           AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "855613e985e37af949f4a83b9d6ed806b8648c32b8bacbf4ba9da2f9611463c7"
+}

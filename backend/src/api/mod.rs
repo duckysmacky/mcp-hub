@@ -1,5 +1,6 @@
 //! The JSON API for the web UI, under `/api`.
 
+pub mod grants;
 pub mod instances;
 
 use axum::{
@@ -17,6 +18,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .nest("/auth", auth::routes())
         .merge(instances::routes())
+        .merge(grants::routes())
         .merge(oauth::consent::routes())
         .layer(middleware::from_fn_with_state(state, require_same_origin))
 }

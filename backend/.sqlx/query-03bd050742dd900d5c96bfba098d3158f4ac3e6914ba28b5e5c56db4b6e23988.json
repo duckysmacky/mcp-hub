@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT token.id, token.kind, token.grant_id, grants.client_id, grants.user_id,\n                grants.instance_id\n         FROM oauth_tokens AS token\n         JOIN oauth_grants AS grants ON grants.id = token.grant_id\n         WHERE token.token_hash = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "grant_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "grant_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "client_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "client_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "instance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "instance_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "03bd050742dd900d5c96bfba098d3158f4ac3e6914ba28b5e5c56db4b6e23988"
+}

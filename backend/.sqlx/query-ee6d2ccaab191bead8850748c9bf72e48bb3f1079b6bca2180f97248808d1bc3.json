@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_grants\n         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL\n         RETURNING instance_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "instance_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "oauth_grants",
+            "name": "instance_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ee6d2ccaab191bead8850748c9bf72e48bb3f1079b6bca2180f97248808d1bc3"
+}
