@@ -30,3 +30,27 @@ dialog.cb-dialog {
 dialog.cb-dialog::backdrop {
 	background: var(--scrim);
 }
+
+/* Cobalt's `.cb-root a` outranks its button colors, which hides the label on a primary link. */
+.cb-root a.cb-btn--primary {
+	color: var(--accent-fg);
+}
+.cb-root a.cb-btn--secondary {
+	color: var(--text);
+}
+.cb-root a.cb-btn--ghost {
+	color: var(--text-2);
+}
+.cb-root a.cb-btn--ghost:hover {
+	color: var(--text);
+}
+
+/* Cobalt raises its controls to touch size on phones, but not these two links. */
+@media (max-width: 639px) {
+	.cb-brand,
+	.cb-crumbs a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--touch);
+	}
+}
