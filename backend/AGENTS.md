@@ -24,17 +24,21 @@ Edition 2024, stable toolchain. No `unsafe` outside the small `pre_exec` block i
 
 ```
 backend/src/
-├── main.rs            # CLI args, config load, startup, graceful shutdown
-├── config.rs          # Config: .env vars (PUBLIC_URL, ALLOW_SIGNUP, DB_*) + settings.toml, validation
-├── app_state.rs       # AppState: db pool, catalog, session manager, config
+├── main.rs            # config load, command dispatch, startup, graceful shutdown
+├── cli.rs             # argument parsing, operator commands (user, invite, catalog)
+├── config.rs          # Config: .env vars (PUBLIC_URL, DB_*) + settings.toml, validation
+├── app_state.rs       # AppState: db pool, catalog, supervisor, rate limiter, config
+├── audit.rs           # audit_events writes (never values, arguments or tokens)
+├── cleanup.rs         # hourly deletion of expired rows
+├── rate_limit.rs      # per-address limits, client IP from trusted proxies
 ├── error.rs           # ApiError / GatewayError -> HTTP responses (no secret leakage)
 ├── db/                # pool setup, typed repository functions per table
-├── catalog/           # catalog TOML parsing, validation, package installation
+├── catalog/           # catalog TOML parsing, validation, lockfile, package installation
 ├── crypto/            # DEK generation, wrap/unwrap, env value encrypt/decrypt, token hashing
-├── auth/              # users, sign-up (ALLOW_SIGNUP), password login, web sessions (cookie), extractors
+├── auth/              # users, sign-up modes, password login and change, web sessions (cookie), extractors
 ├── oauth/             # authorization server: metadata, register (DCR), authorize, token, revoke
 ├── mcp/               # /mcp/{slug} handlers (POST/GET/DELETE), protected resource metadata
-├── bridge/            # stdio <-> JSON-RPC session (BridgeSession), http-mode upstream proxy
+├── bridge/            # stdio <-> JSON-RPC session (BridgeSession), http-mode upstream proxy, tool filter
 ├── supervisor/        # session registry, limits, idle reaper, restart/stop, stderr ring buffers
 ├── process/           # building the child Command: env_clear, allowed env, cwd, process group, pdeathsig
 ├── net_guard/         # URL/host validation against loopback/private/link-local ranges
@@ -108,3 +112,5 @@ POST   /mcp/{slug}                 GET  /mcp/{slug}    DELETE /mcp/{slug}
 - [ ] Does any new child process go through `process::build_child_command`?
 - [ ] Does any new URL or host coming from a user go through `net_guard`?
 - [ ] Are new limits (body size, line length, timeouts, counts) bounded?
+- [ ] Can a new unauthenticated or password-checking route be flooded? Add it to `[rate_limits]`.
+- [ ] Does a new action belong in the audit trail? Record names and ids, never values.

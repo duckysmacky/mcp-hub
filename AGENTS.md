@@ -23,6 +23,8 @@ The reference deployment is `mcp.nikdor.xyz`. The project is built to be self-ho
 ├── frontend/            # SvelteKit SPA (TypeScript, Svelte 5), built statically, served by the backend
 │   └── AGENTS.md
 ├── catalog.example.toml # example operator catalog
+├── catalog.example.lock # its frozen dependencies (`mcp-hub catalog lock`)
+├── settings.example.toml # every settings key with its default
 ├── Dockerfile
 └── docker-compose.yml
 ```
@@ -68,7 +70,9 @@ cd backend
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
-cargo run -- --settings ../settings.dev.toml   # reads ../.env for PUBLIC_URL, ALLOW_SIGNUP, DB_*
+cargo run -- --settings ../settings.dev.toml   # reads ../.env for PUBLIC_URL and DB_*
+cargo run -- --settings ../settings.dev.toml catalog lock   # after any change to catalog.example.toml
+cargo run -- user list                         # operator commands: see cli.rs
 
 # frontend
 cd frontend
@@ -96,9 +100,11 @@ Before calling a task done, run fmt, clippy, and tests for every domain you touc
 
 | Term | Meaning |
 |---|---|
-| **Catalog** | Operator-defined TOML listing allowed MCP servers, their pinned package, runtime, mode, and allowed env keys |
+| **Catalog** | Operator-defined TOML listing allowed MCP servers, their pinned package, fixed runtime, mode, and typed env vars |
+| **Catalog lock** | `catalog.lock`, committed next to the catalog: every enabled server's frozen dependency tree. The hub won't start without a matching one |
+| **Secret var** | An env var with `secret = true` (the default): write-only through the API. All values are encrypted either way |
 | **Template / catalog entry** | One `[[server]]` in the catalog |
-| **Instance** | A user's configured copy of a catalog server: slug, runtime (bun/node), encrypted env values, enabled flag |
+| **Instance** | A user's configured copy of a catalog server: slug, encrypted env values, disabled tools, enabled flag |
 | **Slug** | URL segment of an instance. Unique **per user**, not globally; several users may each have `/mcp/taiga` |
 | **Session** | One MCP session (`Mcp-Session-Id`); until v3 each session owns one child process |
 | **Grant** | A user's OAuth approval for one client and one instance; shown in the UI and revocable |
