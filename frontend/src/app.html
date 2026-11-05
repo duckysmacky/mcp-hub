@@ -14,6 +14,14 @@
 			}
 			document.documentElement.dataset.theme =
 				savedTheme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+			let savedLanguage = null;
+			try {
+				savedLanguage = localStorage.getItem('language');
+			} catch {
+				// Same here: follow the browser.
+			}
+			document.documentElement.lang =
+				savedLanguage ?? (navigator.language.startsWith('ru') ? 'ru' : 'en');
 		</script>
 		%sveltekit.head%
 	</head>

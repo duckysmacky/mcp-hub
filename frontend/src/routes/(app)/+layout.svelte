@@ -3,6 +3,7 @@
 	import Brand from '#lib/components/Brand.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import Toasts from '#lib/components/Toasts.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -39,19 +40,19 @@
 <header class="cb-nav">
 	<div class="cb-nav-in">
 		<Brand />
-		<nav class="cb-nav-links" aria-label="Primary">
+		<nav class="cb-nav-links" aria-label={i18n.t.nav.primary}>
 			<a
 				class="cb-nav-link"
 				href={resolve('/(app)/instances')}
 				aria-current={inInstances ? 'page' : undefined}
 			>
-				Instances
+				{i18n.t.nav.instances}
 			</a>
 		</nav>
 		<div class="cb-nav-user">
 			<span>{data.user?.username}</span>
 			<Button variant="ghost" size="sm" onclick={toggleTheme}>{otherThemeLabel}</Button>
-			<Button variant="ghost" size="sm" onclick={signOut}>Sign out</Button>
+			<Button variant="ghost" size="sm" onclick={signOut}>{i18n.t.nav.signOut}</Button>
 		</div>
 		<button class="cb-btn cb-btn--ghost cb-menu-btn" type="button" popovertarget="account-menu">
 			{data.user?.username}
@@ -61,7 +62,7 @@
 
 <div class="cb-panel account-menu" id="account-menu" popover="auto">
 	<Button variant="ghost" block onclick={toggleTheme}>{otherThemeLabel}</Button>
-	<Button variant="ghost" block onclick={signOut}>Sign out</Button>
+	<Button variant="ghost" block onclick={signOut}>{i18n.t.nav.signOut}</Button>
 </div>
 
 <main class="cb-page">

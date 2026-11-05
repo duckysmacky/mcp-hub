@@ -1,3 +1,4 @@
+import { i18n } from '#lib/i18n/index.svelte.ts';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { error as pageError } from '@sveltejs/kit';
@@ -22,7 +23,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 			body: hasBody ? JSON.stringify(body ?? {}) : undefined
 		});
 	} catch {
-		throw new ApiError(0, 'Could not reach the server. Check your connection and try again.');
+		throw new ApiError(0, i18n.t.errors.unreachable);
 	}
 
 	if (!response.ok) {
@@ -44,12 +45,12 @@ async function readError(response: Response): Promise<string> {
 	try {
 		const body: { error?: unknown } = await response.json();
 		if (typeof body.error === 'string') {
-			return body.error;
+			return i18n.apiError(body.error);
 		}
 	} catch {
 		// Not JSON, for example a body rejected before reaching the handler.
 	}
-	return 'The request failed. Try again.';
+	return i18n.t.errors.requestFailed;
 }
 
 export const api = {
@@ -62,12 +63,7 @@ export const api = {
 
 /** The message to show for anything a page action throws. */
 export function messageOf(error: unknown): string {
-	if (!(error instanceof ApiError)) {
-		return 'Something went wrong. Try again.';
-	}
-	// The backend writes messages mid-sentence: "slug must be lowercase letters...".
-	const message = error.message;
-	return message.charAt(0).toUpperCase() + message.slice(1);
+	return error instanceof ApiError ? error.message : i18n.t.errors.generic;
 }
 
 /** Turns a failed load into SvelteKit's error page, with the readable message. */

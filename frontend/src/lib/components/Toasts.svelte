@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '#lib/components/Button.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { toasts } from '#lib/toasts.svelte.ts';
 
 	const MARKS = { ok: '[ ok ]', info: '[ i ]', err: '[ x ]' };
@@ -30,7 +31,9 @@
 					{action.label}
 				</Button>
 			{:else if toast.tone === 'err'}
-				<Button variant="ghost" size="sm" onclick={() => toasts.dismiss(toast.id)}>Dismiss</Button>
+				<Button variant="ghost" size="sm" onclick={() => toasts.dismiss(toast.id)}
+					>{i18n.t.common.dismiss}</Button
+				>
 			{/if}
 		</div>
 	{/each}

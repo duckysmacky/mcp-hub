@@ -1,10 +1,13 @@
 <script lang="ts">
 	import Brand from '#lib/components/Brand.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 
 	const message = $derived(
-		page.status === 404 ? 'This page doesn’t exist' : (page.error?.message ?? 'The request failed')
+		page.status === 404
+			? i18n.t.errors.pageMissing
+			: (page.error?.message ?? i18n.t.errors.pageFailed)
 	);
 </script>
 
@@ -16,7 +19,7 @@
 	<div class="cb-card">
 		<div class="cb-card-head">
 			<Brand />
-			<span class="cb-label">Error {page.status}</span>
+			<span class="cb-label">{i18n.t.errors.errorLabel(page.status)}</span>
 			<h1 class="cb-card-title">{message}</h1>
 		</div>
 		<div class="cb-card-body">
@@ -24,7 +27,7 @@
 				class="cb-btn cb-btn--secondary cb-btn--lg cb-btn--block"
 				href={resolve('/(app)/instances')}
 			>
-				Go to instances
+				{i18n.t.errors.goToInstances}
 			</a>
 		</div>
 	</div>

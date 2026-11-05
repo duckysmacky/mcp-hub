@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '#lib/components/Button.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 
 	let {
 		context,
@@ -57,7 +58,7 @@
 	</div>
 	<div class="cb-dialog-body" id={IDS.detail}><p>{detail}</p></div>
 	<div class="cb-dialog-foot">
-		<Button variant="ghost" onclick={oncancel}>Cancel</Button>
+		<Button variant="ghost" onclick={oncancel}>{i18n.t.common.cancel}</Button>
 		<Button {variant} onclick={onconfirm}>{action}</Button>
 	</div>
 </dialog>

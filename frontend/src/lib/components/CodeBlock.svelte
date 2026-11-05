@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { toasts } from '#lib/toasts.svelte.ts';
 
 	let { value, name }: { value: string; name: string } = $props();
@@ -16,11 +17,11 @@
 		try {
 			await navigator.clipboard.writeText(value);
 		} catch {
-			toasts.show('err', 'Could not reach the clipboard. Select the text and copy it yourself.');
+			toasts.show('err', i18n.t.common.clipboardFailed);
 			return;
 		}
 		copied = true;
-		toasts.show('ok', `Copied ${name}`);
+		toasts.show('ok', i18n.t.common.copiedName(name));
 		clearTimeout(resetTimer);
 		resetTimer = setTimeout(() => (copied = false), COPIED_FEEDBACK_MS);
 	}
@@ -36,10 +37,10 @@
 	<button
 		class={['cb-btn cb-btn--ghost', copied && 'is-copied']}
 		type="button"
-		aria-label={`Copy ${name}`}
+		aria-label={i18n.t.common.copyName(name)}
 		onclick={copy}
 	>
-		{copied ? 'Copied' : 'Copy'}
+		{copied ? i18n.t.common.copied : i18n.t.common.copy}
 	</button>
 </div>
 

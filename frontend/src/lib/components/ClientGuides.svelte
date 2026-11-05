@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { clientGuides } from '#lib/clients.ts';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 
 	let { slug, url }: { slug: string; url: string } = $props();
 
@@ -15,7 +16,7 @@
 
 <details class="section">
 	<summary class="cb-row">
-		<span class="cb-label">Connect an app</span>
+		<span class="cb-label">{i18n.t.guides.summary}</span>
 		{@render chevron()}
 	</summary>
 	<div class="cb-rows">
@@ -32,7 +33,7 @@
 							<div class="step">
 								<span>{step.text}</span>
 								{#if step.copy}
-									<CodeBlock value={step.copy} name={`${guide.name} step ${index + 1}`} />
+									<CodeBlock value={step.copy} name={i18n.t.guides.step(guide.name, index + 1)} />
 								{/if}
 							</div>
 						</li>

@@ -3,6 +3,7 @@
 	import type { ConsentDecision } from '#lib/api/types.ts';
 	import Banner from '#lib/components/Banner.svelte';
 	import Button from '#lib/components/Button.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
@@ -10,7 +11,7 @@
 	let { data }: PageProps = $props();
 
 	const pending = $derived(data.pending);
-	const clientName = $derived(pending?.client_name_self_reported ?? 'An unnamed app');
+	const clientName = $derived(pending?.client_name_self_reported ?? i18n.t.consent.unnamed);
 
 	let error = $state('');
 	let deciding = $state<'approve' | 'deny' | null>(null);
@@ -32,39 +33,39 @@
 </script>
 
 <svelte:head>
-	<title>Authorize access - MCP Hub</title>
+	<title>{i18n.t.consent.pageTitle}</title>
 </svelte:head>
 
 {#snippet failure()}
 	{#if error}
-		<Banner tone="danger" tag="Failed">{error}</Banner>
+		<Banner tone="danger" tag={i18n.t.consent.failed}>{error}</Banner>
 	{/if}
 {/snippet}
 
 {#snippet clientRow()}
 	<div class="cb-kv">
-		<dt>Client</dt>
-		<dd>{clientName} <span class="cb-tag">Self-reported</span></dd>
+		<dt>{i18n.t.consent.client}</dt>
+		<dd>{clientName} <span class="cb-tag">{i18n.t.common.selfReported}</span></dd>
 	</div>
 {/snippet}
 
 <div class="cb-card">
 	{#if !pending}
 		<div class="cb-card-head">
-			<span class="cb-label">Authorize access</span>
-			<h1 class="cb-card-title">This request has expired</h1>
+			<span class="cb-label">{i18n.t.consent.label}</span>
+			<h1 class="cb-card-title">{i18n.t.consent.expiredTitle}</h1>
 		</div>
 		<div class="cb-card-body">
-			<p class="note">Start connecting again from your app.</p>
+			<p class="note">{i18n.t.consent.expiredBody}</p>
 		</div>
 	{:else if !pending.instance}
 		<div class="cb-card-head">
-			<span class="cb-label">Authorize access</span>
-			<h1 class="cb-card-title">You have no instance called {pending.requested_slug}</h1>
+			<span class="cb-label">{i18n.t.consent.label}</span>
+			<h1 class="cb-card-title">{i18n.t.consent.noInstanceTitle(pending.requested_slug ?? '')}</h1>
 		</div>
 		<div class="cb-card-body">
 			<dl class="cb-kv-list boxed">{@render clientRow()}</dl>
-			<p class="note">It asked for this instance. Create it, then check again.</p>
+			<p class="note">{i18n.t.consent.noInstanceBody}</p>
 			{@render failure()}
 			<a
 				class="cb-btn cb-btn--secondary cb-btn--lg cb-btn--block"
@@ -74,27 +75,27 @@
 				target="_blank"
 				rel="noopener"
 			>
-				Create instance
+				{i18n.t.consent.createInstance}
 			</a>
 			<div class="cb-consent-actions">
 				<Button busy={deciding === 'deny'} onclick={() => decide('deny')}>
-					{deciding === 'deny' ? 'Denying' : 'Deny'}
+					{deciding === 'deny' ? i18n.t.consent.denying : i18n.t.consent.deny}
 				</Button>
-				<Button onclick={() => invalidateAll()}>Check again</Button>
+				<Button onclick={() => invalidateAll()}>{i18n.t.consent.checkAgain}</Button>
 			</div>
 		</div>
 	{:else}
 		<div class="cb-card-head">
-			<span class="cb-label">Authorize access</span>
+			<span class="cb-label">{i18n.t.consent.label}</span>
 			<h1 class="cb-card-title">
-				Allow {clientName} to use your {pending.instance.slug} instance?
+				{i18n.t.consent.title(clientName, pending.instance.slug)}
 			</h1>
 		</div>
 		<div class="cb-card-body">
 			<dl class="cb-kv-list boxed">
 				{@render clientRow()}
 				<div class="cb-kv">
-					<dt>Instance</dt>
+					<dt>{i18n.t.consent.instance}</dt>
 					<dd>
 						<strong>{pending.instance.slug}</strong>
 						<span class="cb-muted">{pending.instance.server_id}</span>
@@ -104,25 +105,24 @@
 
 			{#if pending.redirect_is_loopback}
 				<div class="cb-redirect cb-redirect--warn">
-					<span class="cb-label warn-label">[ ! ] Redirects to your computer</span>
+					<span class="cb-label warn-label">{i18n.t.consent.loopbackLabel}</span>
 					<span class="cb-redirect-host">{pending.redirect_host}</span>
 					<span class="cb-field-help warn-help">
-						An app on your own computer will receive access. Only approve if you just started this
-						sign-in from a tool on this device.
+						{i18n.t.consent.loopbackHelp}
 					</span>
 				</div>
 			{:else}
 				<div class="cb-redirect">
-					<span class="cb-label">You will be sent back to</span>
+					<span class="cb-label">{i18n.t.consent.redirectLabel}</span>
 					<span class="cb-redirect-host">{pending.redirect_host}</span>
 					<span class="cb-field-help">
-						The client name is self-reported. Trust the redirect host, not the name.
+						{i18n.t.consent.redirectHelp}
 					</span>
 				</div>
 			{/if}
 
 			<p class="note">
-				It can call every tool on this instance as you. Stop the instance to cut off access.
+				{i18n.t.consent.scope}
 			</p>
 
 			{@render failure()}
@@ -134,19 +134,19 @@
 					disabled={deciding === 'approve'}
 					onclick={() => decide('deny')}
 				>
-					{deciding === 'deny' ? 'Denying' : 'Deny'}
+					{deciding === 'deny' ? i18n.t.consent.denying : i18n.t.consent.deny}
 				</Button>
 				<Button
 					busy={deciding === 'approve'}
 					disabled={deciding === 'deny'}
 					onclick={() => decide('approve')}
 				>
-					{deciding === 'approve' ? 'Approving' : 'Approve'}
+					{deciding === 'approve' ? i18n.t.consent.approving : i18n.t.consent.approve}
 				</Button>
 			</div>
 		</div>
 	{/if}
-	<div class="cb-card-foot">Signed in as {data.user?.username}</div>
+	<div class="cb-card-foot">{i18n.t.consent.signedInAs(data.user?.username ?? '')}</div>
 </div>
 
 <style>

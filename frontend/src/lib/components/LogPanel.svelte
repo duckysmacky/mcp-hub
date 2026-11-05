@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { i18n } from '#lib/i18n/index.svelte.ts';
+
 	let { output }: { output: string } = $props();
 
 	const STICK_THRESHOLD_PX = 4;
@@ -16,8 +18,8 @@
 
 <section class="cb-panel">
 	<div class="cb-log-head">
-		<h2 class="cb-label">Output</h2>
-		<span class="cb-hint">redacted</span>
+		<h2 class="cb-label">{i18n.t.log.heading}</h2>
+		<span class="cb-hint">{i18n.t.log.hint}</span>
 	</div>
 	<!-- Focusable so keyboard users can scroll it. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -32,14 +34,14 @@
 		}}
 		tabindex="0"
 		role="log"
-		aria-label="Server output"
+		aria-label={i18n.t.log.aria}
 	>
 		{#if output.trim()}
 			{#each lines as line, index (index)}
 				<div class="cb-log-line">{line}</div>
 			{/each}
 		{:else}
-			<div class="cb-log-empty">No output yet. It appears here once an app connects.</div>
+			<div class="cb-log-empty">{i18n.t.log.empty}</div>
 		{/if}
 	</div>
 </section>

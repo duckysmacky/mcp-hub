@@ -1,5 +1,6 @@
 <script lang="ts">
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { statusLabel } from '#lib/status.ts';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
@@ -8,25 +9,28 @@
 </script>
 
 <svelte:head>
-	<title>Instances - MCP Hub</title>
+	<title>{i18n.t.instances.title} - MCP Hub</title>
 </svelte:head>
 
 <div class="cb-page-head">
-	<h1 class="cb-page-title">Instances</h1>
+	<h1 class="cb-page-title">{i18n.t.instances.title}</h1>
 	{#if data.rows.length > 0}
-		<a class="cb-btn cb-btn--primary" href={resolve('/(app)/instances/new')}>New instance</a>
+		<a class="cb-btn cb-btn--primary" href={resolve('/(app)/instances/new')}
+			>{i18n.t.instances.newInstance}</a
+		>
 	{/if}
 </div>
 
 {#if data.rows.length === 0}
 	<div class="cb-empty">
-		<span class="cb-empty-mark">[ 0 instances ]</span>
-		<h2 class="cb-empty-title">No servers yet</h2>
+		<span class="cb-empty-mark">{i18n.t.instances.emptyMark}</span>
+		<h2 class="cb-empty-title">{i18n.t.instances.emptyTitle}</h2>
 		<p class="cb-empty-body">
-			Pick a server from the catalog, give it a slug and add your credentials. You get a personal
-			URL to paste into Claude.
+			{i18n.t.instances.emptyBody}
 		</p>
-		<a class="cb-btn cb-btn--primary" href={resolve('/(app)/instances/new')}>New instance</a>
+		<a class="cb-btn cb-btn--primary" href={resolve('/(app)/instances/new')}
+			>{i18n.t.instances.newInstance}</a
+		>
 	</div>
 {:else}
 	<section class="cb-panel">

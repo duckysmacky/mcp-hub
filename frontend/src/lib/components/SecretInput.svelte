@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { i18n } from '#lib/i18n/index.svelte.ts';
+
 	let {
 		id,
 		value = $bindable(''),
@@ -41,6 +43,6 @@
 		aria-pressed={shown}
 		onclick={() => (shown = !shown)}
 	>
-		{shown ? 'Hide' : 'Show'}
+		{shown ? i18n.t.common.hide : i18n.t.common.show}
 	</button>
 </div>
