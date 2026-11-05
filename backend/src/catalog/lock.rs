@@ -72,11 +72,32 @@ impl CatalogLock {
         if !catalog.servers().any(|server| server.enabled) {
             return Ok(Self::default());
         }
+        let lock = Self::read(path)?.ok_or_else(|| LockError::Missing(path.to_owned()))?;
+        lock.verify(catalog)?;
+        Ok(lock)
+    }
+
+    /// Loads whatever the lockfile has, for `require_lock = false`. A missing file is fine and
+    /// entries that no longer match are dropped, but a broken file still refuses: that's a
+    /// mistake to fix, not a lock nobody wrote.
+    pub fn load_lenient(catalog: &Catalog, path: &Path) -> Result<Self, LockError> {
+        let mut lock = Self::read(path)?.unwrap_or_default();
+        lock.server.retain(|id, locked| {
+            let matches = catalog.get(id).is_none_or(|server| {
+                locked.package == server.package && locked.runtime == server.runtime
+            });
+            if !matches {
+                tracing::warn!(server = %id, "ignoring a stale lockfile entry");
+            }
+            matches
+        });
+        Ok(lock)
+    }
+
+    fn read(path: &Path) -> Result<Option<Self>, LockError> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(LockError::Missing(path.to_owned()));
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(source) => {
                 return Err(LockError::Read {
                     path: path.to_owned(),
@@ -94,8 +115,7 @@ impl CatalogLock {
                 found: lock.version,
             });
         }
-        lock.verify(catalog)?;
-        Ok(lock)
+        Ok(Some(lock))
     }
 
     fn verify(&self, catalog: &Catalog) -> Result<(), LockError> {
@@ -209,6 +229,43 @@ mod tests {
                 Err(LockError::Stale { .. })
             ));
         }
+    }
+
+    #[test]
+    fn lenient_loading_accepts_a_missing_file_and_drops_stale_entries() {
+        let catalog = Catalog::parse(CATALOG).unwrap();
+        let missing = Path::new("/nonexistent/catalog.lock");
+        assert_eq!(
+            CatalogLock::load_lenient(&catalog, missing).unwrap(),
+            CatalogLock::default()
+        );
+
+        let mut lock = CatalogLock::default();
+        lock.insert("demo".to_owned(), locked("demo@1.0.0", RuntimeKind::Bun));
+        let (_directory, path) = write(&lock);
+        assert_eq!(CatalogLock::load_lenient(&catalog, &path).unwrap(), lock);
+
+        let mut stale = CatalogLock::default();
+        stale.insert("demo".to_owned(), locked("demo@0.9.0", RuntimeKind::Bun));
+        let (_directory, path) = write(&stale);
+        assert!(
+            CatalogLock::load_lenient(&catalog, &path)
+                .unwrap()
+                .get("demo")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn lenient_loading_still_refuses_a_broken_file() {
+        let catalog = Catalog::parse(CATALOG).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("catalog.lock");
+        std::fs::write(&path, "not toml [").unwrap();
+        assert!(matches!(
+            CatalogLock::load_lenient(&catalog, &path),
+            Err(LockError::Parse { .. })
+        ));
     }
 
     #[test]

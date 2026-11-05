@@ -117,6 +117,7 @@ pub fn host_is_loopback(url: &Url) -> bool {
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub server: ServerSettings,
+    pub catalog: CatalogSettings,
     pub paths: PathSettings,
     pub runtimes: RuntimeSettings,
     pub limits: LimitSettings,
@@ -133,6 +134,19 @@ pub struct Settings {
 #[serde(default, deny_unknown_fields)]
 pub struct ServerSettings {
     pub signup: SignupMode,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CatalogSettings {
+    /// Refuse to start unless `catalog.lock` covers every enabled server.
+    pub require_lock: bool,
+}
+
+impl Default for CatalogSettings {
+    fn default() -> Self {
+        Self { require_lock: true }
+    }
 }
 
 /// Who may create an account. Closed unless the operator opens it.
@@ -508,6 +522,14 @@ mod tests {
             assert_eq!(settings.server.signup, mode);
         }
         assert!(toml::from_str::<Settings>("[server]\nsignup = \"maybe\"").is_err());
+    }
+
+    #[test]
+    fn the_catalog_lock_is_required_unless_turned_off() {
+        assert!(Settings::default().catalog.require_lock);
+        let settings: Settings = toml::from_str("[catalog]\nrequire_lock = false").unwrap();
+        assert!(!settings.catalog.require_lock);
+        assert!(toml::from_str::<Settings>("[catalog]\nnonsense = true").is_err());
     }
 
     #[test]

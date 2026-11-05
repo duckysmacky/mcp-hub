@@ -16,7 +16,7 @@ use crate::{
     audit, auth,
     catalog::{
         Catalog,
-        install::{generate_lock, reinstall_server},
+        install::{effective_lock, generate_lock, reinstall_server},
         lock::CatalogLock,
     },
     config::Config,
@@ -242,7 +242,7 @@ async fn reinstall_catalog(
 ) -> anyhow::Result<()> {
     let paths = &config.settings.paths;
     let catalog = Catalog::load(&paths.catalog)?;
-    let lock = CatalogLock::load_verified(&catalog, &CatalogLock::path_for(&paths.catalog))?;
+    let lock = effective_lock(&catalog, &config.settings).await?;
     if let Some(server_id) = server_id
         && !catalog.get(server_id).is_some_and(|server| server.enabled)
     {

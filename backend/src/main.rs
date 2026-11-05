@@ -4,7 +4,10 @@ use anyhow::Context;
 use mcp_hub::{
     app_state::AppState,
     build_router,
-    catalog::{Catalog, ServerTemplate, install::install_all, lock::CatalogLock},
+    catalog::{
+        Catalog, ServerTemplate,
+        install::{effective_lock, install_all},
+    },
     cleanup,
     cli::{self, Command},
     config::{Config, Settings, SignupMode},
@@ -46,10 +49,13 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     db::migrate(&pool).await?;
 
     let catalog = Catalog::load(&config.settings.paths.catalog)?;
-    let lock = CatalogLock::load_verified(
-        &catalog,
-        &CatalogLock::path_for(&config.settings.paths.catalog),
-    )?;
+    if !config.settings.catalog.require_lock {
+        tracing::warn!(
+            "catalog.require_lock is off: servers without a lock entry get whatever their \
+             dependencies resolve to at startup"
+        );
+    }
+    let lock = effective_lock(&catalog, &config.settings).await?;
     let bin_scripts = install_all(
         &catalog,
         &lock,

@@ -13,9 +13,9 @@ use tokio::process::Command;
 
 use super::{
     Catalog, RuntimeKind, ServerTemplate,
-    lock::{CatalogLock, LockedServer},
+    lock::{CatalogLock, LockError, LockedServer},
 };
-use crate::config::RuntimeSettings;
+use crate::config::{RuntimeSettings, Settings};
 
 /// A Python server's virtual environment, relative to its package directory.
 const UV_VENV: &str = ".venv";
@@ -36,6 +36,8 @@ pub struct ResolvedServer {
 pub enum InstallError {
     #[error("server {server}: {reason}")]
     Failed { server: String, reason: String },
+    #[error(transparent)]
+    Lock(#[from] LockError),
 }
 
 fn failed(server: &ServerTemplate, reason: impl Into<String>) -> InstallError {
@@ -43,6 +45,30 @@ fn failed(server: &ServerTemplate, reason: impl Into<String>) -> InstallError {
         server: server.id.clone(),
         reason: reason.into(),
     }
+}
+
+/// The lock to install from. With `catalog.require_lock` it's the committed file, which must
+/// match exactly. Without, whatever the file lacks is resolved now and then installed the same
+/// frozen way, but nobody has reviewed that tree and it can differ between starts.
+pub async fn effective_lock(
+    catalog: &Catalog,
+    settings: &Settings,
+) -> Result<CatalogLock, InstallError> {
+    let paths = &settings.paths;
+    let path = CatalogLock::path_for(&paths.catalog);
+    if settings.catalog.require_lock {
+        return Ok(CatalogLock::load_verified(catalog, &path)?);
+    }
+    let mut lock = CatalogLock::load_lenient(catalog, &path)?;
+    lock_missing(
+        catalog,
+        &mut lock,
+        &paths.packages,
+        &paths.scratch.join("catalog-lock"),
+        &settings.runtimes,
+    )
+    .await?;
+    Ok(lock)
 }
 
 /// Installs every enabled server's locked packages and returns what each one runs.
@@ -207,7 +233,22 @@ pub async fn generate_lock(
     runtimes: &RuntimeSettings,
 ) -> Result<CatalogLock, InstallError> {
     let mut lock = CatalogLock::default();
+    lock_missing(catalog, &mut lock, packages_dir, work_dir, runtimes).await?;
+    Ok(lock)
+}
+
+/// Resolves the enabled servers that `lock` doesn't cover yet.
+async fn lock_missing(
+    catalog: &Catalog,
+    lock: &mut CatalogLock,
+    packages_dir: &Path,
+    work_dir: &Path,
+    runtimes: &RuntimeSettings,
+) -> Result<(), InstallError> {
     for server in catalog.servers().filter(|server| server.enabled) {
+        if lock.get(&server.id).is_some() {
+            continue;
+        }
         tracing::info!(server = %server.id, package = %server.package, "locking package");
         let directory = work_dir.join(&server.id);
         create_directory(server, &directory).await?;
@@ -223,7 +264,7 @@ pub async fn generate_lock(
             },
         );
     }
-    Ok(lock)
+    Ok(())
 }
 
 async fn lock_server(
@@ -953,6 +994,73 @@ echo 'demo-pkg==1.2 --hash=sha256:abc'
             Some(second.join("server"))
         );
         assert_eq!(find_executable("missing", directories()), None);
+    }
+
+    fn settings_for(root: &Path, tool: &Path, require_lock: bool) -> Settings {
+        let mut settings = Settings::default();
+        settings.catalog.require_lock = require_lock;
+        settings.paths.catalog = root.join("catalog.toml");
+        settings.paths.packages = root.join("packages");
+        settings.paths.scratch = root.join("scratch");
+        settings.runtimes = runtimes_with(tool);
+        settings
+    }
+
+    #[tokio::test]
+    async fn without_a_required_lock_a_missing_entry_is_resolved_then_installed_frozen() {
+        let root = tempfile::tempdir().unwrap();
+        let fake_bun = root.path().join("fake-bun.sh");
+        write_script(
+            &fake_bun,
+            r#"#!/bin/sh
+echo "$@" >> args.txt
+echo resolved-tree > bun.lock
+mkdir -p node_modules/demo
+echo '{"bin":"cli.js"}' > node_modules/demo/package.json
+touch node_modules/demo/cli.js
+"#,
+        );
+        let catalog = catalog("demo@1.2.3", None);
+        let settings = settings_for(root.path(), &fake_bun, false);
+
+        let lock = effective_lock(&catalog, &settings).await.unwrap();
+        assert_eq!(lock.get("demo").unwrap().lock, "resolved-tree\n");
+
+        install_all(
+            &catalog,
+            &lock,
+            &settings.paths.packages,
+            &settings.runtimes,
+        )
+        .await
+        .unwrap();
+        let args = std::fs::read_to_string(settings.paths.packages.join("demo/args.txt")).unwrap();
+        assert_eq!(args.trim(), "install --frozen-lockfile --ignore-scripts");
+    }
+
+    #[tokio::test]
+    async fn without_a_required_lock_an_existing_entry_is_kept() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = settings_for(root.path(), Path::new("/nonexistent/bun"), false);
+        let catalog = catalog("demo@1.2.3", None);
+        let written = lock_of(&catalog, "committed tree");
+        std::fs::write(
+            CatalogLock::path_for(&settings.paths.catalog),
+            toml::to_string_pretty(&written).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(effective_lock(&catalog, &settings).await.unwrap(), written);
+    }
+
+    #[tokio::test]
+    async fn a_required_lock_still_refuses_when_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = settings_for(root.path(), Path::new("/nonexistent/bun"), true);
+        let error = effective_lock(&catalog("demo@1.2.3", None), &settings)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, InstallError::Lock(LockError::Missing(_))));
     }
 
     #[test]

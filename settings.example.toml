@@ -4,6 +4,9 @@
 [server]
 signup = "disabled"  # enabled, disabled, invite-only
 
+[catalog]
+require_lock = true  # false: start without a catalog.lock, resolving what it doesn't cover
+
 [paths]
 catalog  = "/etc/mcp-hub/catalog.toml"   # catalog.lock sits next to it
 packages = "/data/packages"
