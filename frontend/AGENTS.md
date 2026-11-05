@@ -39,7 +39,7 @@ frontend/src/
 │   │   ├── client.ts        # fetch wrapper: credentials 'same-origin', JSON, error mapping
 │   │   └── types.ts         # DTO types mirroring backend api/ DTOs
 │   ├── styles/              # tokens.css and cobalt.css (vendored), app.css (ours)
-│   ├── components/          # Button, SecretInput, EnvVars, ClientGuides, ConfirmDialog, ...
+│   ├── components/          # Button, SecretInput, EnvVars, EnvVarRow, ClientGuides, ConfirmDialog, ...
 │   ├── clients.ts           # how to connect each MCP client to an instance
 │   ├── navigation.ts        # safeNextPath: the open-redirect guard for ?next=
 │   ├── dates.ts             # relative times
@@ -73,7 +73,7 @@ Pages call `api` from `client.ts` directly, and the current user comes from the 
 ### Secrets UI (write-only, like GitHub secrets)
 
 - A **secret** env value is write-only: never displayed, prefilled, or sent back by the API. The UI shows `SET` plus the date it was set, with a **Replace** action and a **Remove** action. Non-secret values come back as `value` and can be read and edited; they are encrypted at rest all the same.
-- Adding a value: a dropdown of the server's `env` specs (minus the ones already set or blocked by a conflict) plus an input by type. Secret inputs use `type="password"` and `autocomplete="new-password"` and are cleared from component state immediately after a successful save.
+- Values are set in place, in the variable's own row, with an input by type. Required variables come first; optional ones follow in a collapsible section. Secrets carry a lock tag. Secret inputs use `type="password"` and `autocomplete="new-password"` and are cleared from component state immediately after a successful save.
 - A required variable is tinted only when it's in `missing_required`, which already treats conflicting variables as alternatives.
 - Vars the catalog no longer lists (`in_catalog = false`) are shown as "no longer used", with Remove only.
 
