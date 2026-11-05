@@ -53,6 +53,8 @@ pub struct StartRequest<'a> {
     pub script: &'a Path,
     pub args: &'a [String],
     pub env: Vec<EnvValue>,
+    /// The instance's secret values, so that output can be redacted against them.
+    pub secrets: Vec<Zeroizing<String>>,
 }
 
 /// What's needed to start an http upstream. `env` must come from `declared_process_env`.
@@ -64,7 +66,7 @@ pub struct StartUpstream<'a> {
     pub args: &'a [String],
     pub http: &'a HttpSettings,
     pub env: Vec<EnvValue>,
-    /// Every value of the instance, so that output can be redacted against all of them.
+    /// The instance's secret values, so that output can be redacted against them.
     pub secrets: Vec<Zeroizing<String>>,
 }
 
@@ -274,8 +276,6 @@ impl Supervisor {
             env: &request.env,
             scratch_dir: &scratch_dir,
         });
-        let secrets: Vec<Zeroizing<String>> =
-            request.env.into_iter().map(|(_, value)| value).collect();
 
         let spawned = BridgeSession::spawn(SpawnParams {
             session_id: session_id.clone(),
@@ -290,7 +290,7 @@ impl Supervisor {
                 request_timeout: Duration::from_secs(limits.request_timeout_secs),
             },
             output,
-            secrets,
+            secrets: request.secrets,
         });
         let session = match spawned {
             Ok(session) => session,

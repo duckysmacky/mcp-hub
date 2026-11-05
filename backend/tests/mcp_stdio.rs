@@ -727,3 +727,51 @@ async fn chosen_runtime_is_used(pool: PgPool) {
     .await;
     app.initialize("demo", &token).await;
 }
+
+const REQUIRED_CATALOG: &str = r#"
+[[server]]
+id = "demo"
+mode = "stdio"
+runtime = "bun"
+package = "demo@1.0.0"
+
+[[server.env]]
+name = "TOKEN"
+required = true
+"#;
+
+#[sqlx::test]
+async fn initialize_reports_a_required_value_removed_after_start(pool: PgPool) {
+    let app = McpApp::spawn(pool, REQUIRED_CATALOG, |_| {}).await;
+    let (cookie, id) = app
+        .user_with_instance("alice", "demo", "demo", &[("TOKEN", "value")])
+        .await;
+    let tokens = connect(&app, &cookie, "demo").await;
+    let removed = app
+        .send_json(
+            reqwest::Method::DELETE,
+            &format!("/api/instances/{id}/env/TOKEN"),
+            Some(&cookie),
+            json!({}),
+        )
+        .await;
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+
+    let response = app
+        .mcp_post(
+            "demo",
+            Some(&tokens.access_token),
+            None,
+            &initialize_message(),
+        )
+        .await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(response.headers().get("mcp-session-id").is_none());
+    let message = read_json_rpc(response).await;
+    assert!(
+        message["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("TOKEN")
+    );
+}

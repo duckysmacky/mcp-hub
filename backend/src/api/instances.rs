@@ -1,5 +1,7 @@
 //! Instance management. Env values are write-only: no response ever contains one.
 
+use std::collections::{HashMap, HashSet};
+
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -77,6 +79,9 @@ struct EnvStatus {
     #[serde(with = "time::serde::rfc3339")]
     updated_at: OffsetDateTime,
     in_catalog: bool,
+    /// Only for vars the catalog marks `secret = false`. A secret is never returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<Zeroizing<String>>,
 }
 
 #[derive(Serialize)]
@@ -89,24 +94,72 @@ struct InstanceResponse {
     needs_attention: Option<String>,
     url: String,
     env: Vec<EnvStatus>,
+    missing_required: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     updated_at: OffsetDateTime,
 }
 
-async fn describe(state: &AppState, instance: Instance) -> Result<InstanceResponse, ApiError> {
+/// Decrypts the instance's non-secret values. Secrets are left out here, before anything
+/// could put them in a response.
+async fn readable_values(
+    state: &AppState,
+    session: &CurrentSession,
+    instance_id: i64,
+    template: &ServerTemplate,
+) -> Result<HashMap<String, Zeroizing<String>>, ApiError> {
+    let readable: Vec<_> = db::instances::env_ciphertexts(&state.pool, instance_id)
+        .await?
+        .into_iter()
+        .filter(|row| {
+            template
+                .env_spec(&row.env_var)
+                .is_some_and(|spec| !spec.secret)
+        })
+        .collect();
+    if readable.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let dek = session.dek()?;
+    readable
+        .into_iter()
+        .map(|row| {
+            let value = crypto::decrypt_env(&dek, instance_id, &row.env_var, &row.ciphertext)?;
+            Ok((row.env_var, value))
+        })
+        .collect()
+}
+
+async fn describe(
+    state: &AppState,
+    session: &CurrentSession,
+    instance: Instance,
+) -> Result<InstanceResponse, ApiError> {
     let template = state.catalog.get(&instance.server_id);
-    let env = db::instances::list_env(&state.pool, instance.id)
+    let mut readable = match template {
+        Some(template) => readable_values(state, session, instance.id, template).await?,
+        None => HashMap::new(),
+    };
+    let env: Vec<EnvStatus> = db::instances::list_env(&state.pool, instance.id)
         .await?
         .into_iter()
         .map(|entry| EnvStatus {
             in_catalog: template.is_some_and(|server| server.env_spec(&entry.env_var).is_some()),
+            value: readable.remove(&entry.env_var),
             var: entry.env_var,
             is_set: true,
             updated_at: entry.updated_at,
         })
         .collect();
+    let set_vars: HashSet<&str> = env.iter().map(|entry| entry.var.as_str()).collect();
+    let missing_required = template.map_or_else(Vec::new, |server| {
+        server
+            .missing_required(&set_vars)
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    });
     Ok(InstanceResponse {
         id: instance.id,
         url: format!("{}/mcp/{}", state.config.public_url.as_str(), instance.slug),
@@ -116,6 +169,7 @@ async fn describe(state: &AppState, instance: Instance) -> Result<InstanceRespon
         enabled: instance.enabled,
         needs_attention: instance.needs_attention,
         env,
+        missing_required,
         created_at: instance.created_at,
         updated_at: instance.updated_at,
     })
@@ -138,9 +192,7 @@ fn template_of<'a>(
     state
         .catalog
         .get(&instance.server_id)
-        .ok_or(ApiError::Conflict(
-            "this server was removed from the catalog",
-        ))
+        .ok_or_else(|| ApiError::Conflict("this server was removed from the catalog".to_owned()))
 }
 
 fn validate_slug(slug: &str) -> Result<(), ApiError> {
@@ -160,7 +212,7 @@ async fn list_instances(
 ) -> Result<Json<Vec<InstanceResponse>>, ApiError> {
     let mut responses = Vec::new();
     for instance in db::instances::list(&state.pool, session.user_id).await? {
-        responses.push(describe(&state, instance).await?);
+        responses.push(describe(&state, &session, instance).await?);
     }
     Ok(Json(responses))
 }
@@ -190,7 +242,10 @@ async fn create_instance(
         request.runtime.map(RuntimeKind::as_str),
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(describe(&state, instance).await?)))
+    Ok((
+        StatusCode::CREATED,
+        Json(describe(&state, &session, instance).await?),
+    ))
 }
 
 async fn get_instance(
@@ -199,7 +254,7 @@ async fn get_instance(
     Path(id): Path<i64>,
 ) -> Result<Json<InstanceResponse>, ApiError> {
     let instance = owned_instance(&state, &session, id).await?;
-    Ok(Json(describe(&state, instance).await?))
+    Ok(Json(describe(&state, &session, instance).await?))
 }
 
 #[derive(Deserialize)]
@@ -229,7 +284,7 @@ async fn update_instance(
     .ok_or(ApiError::NotFound)?;
     // Running processes were started under the old slug or runtime.
     state.supervisor.stop_instance(id);
-    Ok(Json(describe(&state, instance).await?))
+    Ok(Json(describe(&state, &session, instance).await?))
 }
 
 async fn delete_instance(
@@ -258,17 +313,27 @@ async fn set_env_value(
 ) -> Result<StatusCode, ApiError> {
     let instance = owned_instance(&state, &session, id).await?;
     let template = template_of(&state, &instance)?;
-    if template.env_spec(&var).is_none() {
-        return Err(ApiError::BadRequest(
-            "this server doesn't allow that variable".to_owned(),
-        ));
-    }
+    let spec = template.env_spec(&var).ok_or_else(|| {
+        ApiError::BadRequest("this server doesn't allow that variable".to_owned())
+    })?;
     if request.value.len() > MAX_ENV_VALUE_BYTES {
         return Err(ApiError::BadRequest("value is too long".to_owned()));
     }
     // A NUL can't exist in a process env, so the child could never be spawned.
     if request.value.contains('\0') {
         return Err(ApiError::BadRequest("value contains a NUL byte".to_owned()));
+    }
+    spec.validate_value(&request.value)
+        .map_err(ApiError::BadRequest)?;
+    let existing = db::instances::list_env(&state.pool, id).await?;
+    if let Some(conflict) = existing
+        .iter()
+        .find(|entry| spec.conflicts.contains(&entry.env_var))
+    {
+        return Err(ApiError::Conflict(format!(
+            "{var} can't be set together with {}; remove that first",
+            conflict.env_var
+        )));
     }
     net_guard::check_env_value(&request.value, &state.config.settings.network)
         .await
@@ -298,7 +363,19 @@ async fn start_instance(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let instance = owned_instance(&state, &session, id).await?;
-    template_of(&state, &instance)?;
+    let template = template_of(&state, &instance)?;
+    let existing = db::instances::list_env(&state.pool, id).await?;
+    let set_vars = existing
+        .iter()
+        .map(|entry| entry.env_var.as_str())
+        .collect();
+    let missing = template.missing_required(&set_vars);
+    if !missing.is_empty() {
+        return Err(ApiError::Conflict(format!(
+            "set these values first: {}",
+            missing.join(", ")
+        )));
+    }
     db::instances::set_enabled(&state.pool, session.user_id, id, true).await?;
     Ok(StatusCode::NO_CONTENT)
 }

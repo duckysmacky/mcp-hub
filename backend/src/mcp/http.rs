@@ -21,7 +21,7 @@ use crate::{
     bridge::http::{InFlightRequest, UpstreamProcess},
     catalog::{HttpSettings, render_template},
     crypto, db,
-    process::{EnvValue, declared_process_env},
+    process::{EnvValue, declared_process_env, secret_values},
     supervisor::StartUpstream,
 };
 
@@ -85,11 +85,11 @@ async fn initialize(
     let id = message["id"].clone();
     let http = http_settings(target)?;
     let values = target.decrypt_env().await?;
-    if let Err(reason) = target.check_urls(&values).await {
+    if let Err(reason) = target.check_values(&values).await {
         return Ok(json_error(&id, &reason));
     }
 
-    let secrets: Vec<Zeroizing<String>> = values.iter().map(|(_, value)| value.clone()).collect();
+    let secrets = secret_values(target.template, &values);
     let started = target
         .state
         .supervisor

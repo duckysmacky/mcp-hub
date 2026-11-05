@@ -108,7 +108,7 @@ async fn approve(
         .ok_or(ApiError::NotFound)?;
     let instance = requested_instance(&state, session.user_id, &unclaimed)
         .await?
-        .ok_or(ApiError::Conflict("you have no instance with this slug"))?;
+        .ok_or_else(|| ApiError::Conflict("you have no instance with this slug".to_owned()))?;
     let pending = db::oauth::consume_pending(&state.pool, &id)
         .await?
         .ok_or(ApiError::NotFound)?;

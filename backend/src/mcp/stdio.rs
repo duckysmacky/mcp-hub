@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     bridge::stdio::{BridgeError, BridgeSession},
-    process::declared_process_env,
+    process::{declared_process_env, secret_values},
     supervisor::StartRequest,
 };
 
@@ -50,9 +50,10 @@ pub async fn post(
 async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, McpError> {
     let id = message["id"].clone();
     let values = target.decrypt_env().await?;
-    if let Err(reason) = target.check_urls(&values).await {
+    if let Err(reason) = target.check_values(&values).await {
         return Ok(json_error(&id, &reason));
     }
+    let secrets = secret_values(target.template, &values);
 
     let started = target
         .state
@@ -64,6 +65,7 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
             script: target.script()?,
             args: &target.template.bin_args,
             env: declared_process_env(target.template, values),
+            secrets,
         })
         .await;
     let session = match started {

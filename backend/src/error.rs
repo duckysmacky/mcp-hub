@@ -22,7 +22,7 @@ pub enum ApiError {
     #[error("not found")]
     NotFound,
     #[error("{0}")]
-    Conflict(&'static str),
+    Conflict(String),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("crypto error: {0}")]
@@ -52,7 +52,9 @@ impl IntoResponse for ApiError {
 /// Maps a unique-constraint failure to a conflict, leaving other errors alone.
 pub fn conflict_on_duplicate(error: sqlx::Error, message: &'static str) -> ApiError {
     match error.as_database_error() {
-        Some(database_error) if database_error.is_unique_violation() => ApiError::Conflict(message),
+        Some(database_error) if database_error.is_unique_violation() => {
+            ApiError::Conflict(message.to_owned())
+        }
         _ => error.into(),
     }
 }

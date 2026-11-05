@@ -28,6 +28,56 @@ package = "other@1.0.0"
 
 [[server.env]]
 name = "TOKEN"
+
+[[server]]
+id = "typed"
+mode = "stdio"
+runtime = "bun"
+package = "typed@1.0.0"
+
+[[server.env]]
+name = "HOST"
+secret = false
+required = true
+
+[[server.env]]
+name = "RETRIES"
+type = "number"
+secret = false
+
+[[server.env]]
+name = "VERBOSE"
+type = "boolean"
+secret = false
+
+[[server.env]]
+name = "COLOR"
+type = "enum"
+enum_values = ["red", "blue"]
+secret = false
+
+[[server.env]]
+name = "TOKEN"
+required = true
+conflicts = ["USERNAME", "PASSWORD"]
+
+[[server.env]]
+name = "USERNAME"
+secret = false
+required = true
+conflicts = ["TOKEN"]
+
+[[server.env]]
+name = "PASSWORD"
+required = true
+conflicts = ["TOKEN"]
+
+[[server]]
+id = "turned-off"
+enabled = false
+mode = "stdio"
+runtime = "bun"
+package = "off@1.0.0"
 "#;
 
 struct Setup {
@@ -444,4 +494,170 @@ async fn vars_removed_from_the_catalog_are_marked(pool: PgPool) {
         .unwrap();
     assert_eq!(instance["env"][0]["var"], "OLD_VAR");
     assert_eq!(instance["env"][0]["in_catalog"], false);
+}
+
+async fn typed_instance(app: &TestApp, cookie: &str) -> i64 {
+    let created: Value = app
+        .post(
+            "/api/instances",
+            Some(cookie),
+            json!({ "server_id": "typed", "slug": "typed" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    created["id"].as_i64().unwrap()
+}
+
+#[sqlx::test]
+async fn disabled_servers_are_not_offered(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool).await;
+    let catalog: Value = app
+        .get("/api/catalog", Some(&alice))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let ids: Vec<&str> = catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|server| server["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["demo", "other", "typed"]);
+}
+
+#[sqlx::test]
+async fn env_values_must_match_their_type(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool).await;
+    let id = typed_instance(&app, &alice).await;
+
+    for (var, value, expected) in [
+        ("RETRIES", "3", StatusCode::NO_CONTENT),
+        ("RETRIES", "three", StatusCode::BAD_REQUEST),
+        ("VERBOSE", "true", StatusCode::NO_CONTENT),
+        ("VERBOSE", "yes", StatusCode::BAD_REQUEST),
+        ("COLOR", "red", StatusCode::NO_CONTENT),
+        ("COLOR", "green", StatusCode::BAD_REQUEST),
+        ("HOST", "", StatusCode::BAD_REQUEST),
+    ] {
+        assert_eq!(
+            put_env(&app, &alice, id, var, value).await,
+            expected,
+            "{var}={value}"
+        );
+    }
+}
+
+#[sqlx::test]
+async fn conflicting_values_are_refused_in_both_directions(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool).await;
+    let id = typed_instance(&app, &alice).await;
+
+    assert_eq!(
+        put_env(&app, &alice, id, "TOKEN", "secret-token").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        put_env(&app, &alice, id, "USERNAME", "alice").await,
+        StatusCode::CONFLICT
+    );
+    // Replacing the value that is already set is not a conflict.
+    assert_eq!(
+        put_env(&app, &alice, id, "TOKEN", "new-token").await,
+        StatusCode::NO_CONTENT
+    );
+
+    let removed = app
+        .send_json(
+            Method::DELETE,
+            &format!("/api/instances/{id}/env/TOKEN"),
+            Some(&alice),
+            json!({}),
+        )
+        .await;
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        put_env(&app, &alice, id, "USERNAME", "alice").await,
+        StatusCode::NO_CONTENT
+    );
+    let response = app
+        .send_json(
+            Method::PUT,
+            &format!("/api/instances/{id}/env/TOKEN"),
+            Some(&alice),
+            json!({ "value": "secret-token" }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("USERNAME"));
+    assert!(!body.contains("secret-token"));
+}
+
+#[sqlx::test]
+async fn required_values_must_be_set_before_starting(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool).await;
+    let id = typed_instance(&app, &alice).await;
+    let start = format!("/api/instances/{id}/start");
+
+    let refused = app.post(&start, Some(&alice), json!({})).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert!(refused.text().await.unwrap().contains("HOST"));
+
+    assert_eq!(
+        put_env(&app, &alice, id, "HOST", "example").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        put_env(&app, &alice, id, "USERNAME", "alice").await,
+        StatusCode::NO_CONTENT
+    );
+    let instance: Value = app
+        .get(&format!("/api/instances/{id}"), Some(&alice))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(instance["missing_required"], json!(["PASSWORD"]));
+    let refused = app.post(&start, Some(&alice), json!({})).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+
+    assert_eq!(
+        put_env(&app, &alice, id, "PASSWORD", "hunter2").await,
+        StatusCode::NO_CONTENT
+    );
+    let started = app.post(&start, Some(&alice), json!({})).await;
+    assert_eq!(started.status(), StatusCode::NO_CONTENT);
+}
+
+#[sqlx::test]
+async fn only_non_secret_values_can_be_read_back(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool).await;
+    let id = typed_instance(&app, &alice).await;
+    put_env(&app, &alice, id, "HOST", "readable-host").await;
+    put_env(&app, &alice, id, "PASSWORD", "hunter2").await;
+
+    let response = app
+        .get(&format!("/api/instances/{id}"), Some(&alice))
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(response.contains("readable-host"));
+    assert!(!response.contains("hunter2"));
+
+    let instance: Value = serde_json::from_str(&response).unwrap();
+    let entry = |var: &str| {
+        instance["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["var"] == var)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(entry("HOST")["value"], "readable-host");
+    assert!(entry("PASSWORD").get("value").is_none());
 }

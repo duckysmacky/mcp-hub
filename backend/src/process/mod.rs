@@ -90,6 +90,16 @@ pub fn declared_process_env(template: &ServerTemplate, values: Vec<EnvValue>) ->
         .collect()
 }
 
+/// The values output must be redacted against. Non-secret values stay: redacting a
+/// flag set to `true` would blank that word everywhere in the status page's output.
+pub fn secret_values(template: &ServerTemplate, values: &[EnvValue]) -> Vec<Zeroizing<String>> {
+    values
+        .iter()
+        .filter(|(name, _)| template.env_spec(name).is_none_or(|spec| spec.secret))
+        .map(|(_, value)| value.clone())
+        .collect()
+}
+
 /// Kills a child's whole process group. Already-gone groups are not an error.
 pub fn kill_group(process_id: u32) {
     if let Ok(raw_id) = i32::try_from(process_id) {

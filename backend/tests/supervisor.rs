@@ -33,6 +33,7 @@ async fn start(
             script: Path::new("ignored.js"),
             args: &[],
             env: Vec::new(),
+            secrets: Vec::new(),
         })
         .await
 }

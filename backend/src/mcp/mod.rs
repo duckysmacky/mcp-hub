@@ -192,9 +192,17 @@ impl Target<'_> {
         Ok(values)
     }
 
-    /// Re-checks URL values at spawn time, because DNS may have changed since they were
-    /// saved. Returns the reason for the client; it never includes the value.
-    async fn check_urls(&self, values: &[EnvValue]) -> Result<(), String> {
+    /// Checks that nothing required is missing, and re-checks URL values because DNS may
+    /// have changed since they were saved. The reason is for the client: never a value.
+    async fn check_values(&self, values: &[EnvValue]) -> Result<(), String> {
+        let set_vars = values.iter().map(|(name, _)| name.as_str()).collect();
+        let missing = self.template.missing_required(&set_vars);
+        if !missing.is_empty() {
+            return Err(format!(
+                "this instance is missing required values: {}",
+                missing.join(", ")
+            ));
+        }
         for (name, value) in values {
             net_guard::check_env_value(value, &self.state.config.settings.network)
                 .await

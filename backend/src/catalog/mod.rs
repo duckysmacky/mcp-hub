@@ -118,6 +118,28 @@ fn default_true() -> bool {
     true
 }
 
+impl EnvSpec {
+    /// Checks a value against the declared type. The message never contains the value.
+    pub fn validate_value(&self, value: &str) -> Result<(), String> {
+        let name = &self.name;
+        if self.required && value.is_empty() {
+            return Err(format!("{name} is required and can't be empty"));
+        }
+        match self.kind {
+            EnvType::String => Ok(()),
+            EnvType::Number if value.parse::<f64>().is_ok_and(f64::is_finite) => Ok(()),
+            EnvType::Number => Err(format!("{name} must be a number")),
+            EnvType::Boolean if value == "true" || value == "false" => Ok(()),
+            EnvType::Boolean => Err(format!("{name} must be true or false")),
+            EnvType::Enum if self.enum_values.iter().any(|allowed| allowed == value) => Ok(()),
+            EnvType::Enum => Err(format!(
+                "{name} must be one of: {}",
+                self.enum_values.join(", ")
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTemplate {
@@ -138,6 +160,22 @@ pub struct ServerTemplate {
 impl ServerTemplate {
     pub fn env_spec(&self, name: &str) -> Option<&EnvSpec> {
         self.env.iter().find(|spec| spec.name == name)
+    }
+
+    /// Required vars that still need a value. Setting a conflicting var satisfies a
+    /// required one: they are alternatives, such as a token or a username and password.
+    pub fn missing_required(&self, set_vars: &HashSet<&str>) -> Vec<&str> {
+        self.env
+            .iter()
+            .filter(|spec| spec.required && !set_vars.contains(spec.name.as_str()))
+            .filter(|spec| {
+                !spec
+                    .conflicts
+                    .iter()
+                    .any(|other| set_vars.contains(other.as_str()))
+            })
+            .map(|spec| spec.name.as_str())
+            .collect()
     }
 }
 
@@ -615,6 +653,86 @@ mod tests {
         assert!(Catalog::parse(&declare(r#"["B"]"#, "[]")).is_err());
         assert!(Catalog::parse(&declare(r#"["A"]"#, "[]")).is_err());
         assert!(Catalog::parse(&declare(r#"["C"]"#, "[]")).is_err());
+    }
+
+    #[test]
+    fn values_are_checked_against_their_type() {
+        let spec = |kind, enum_values: &[&str]| EnvSpec {
+            name: "VAR".to_owned(),
+            description: String::new(),
+            kind,
+            enum_values: enum_values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            secret: true,
+            required: false,
+            conflicts: Vec::new(),
+        };
+        let checks = [
+            (spec(EnvType::String, &[]), "anything", true),
+            (spec(EnvType::String, &[]), "", true),
+            (spec(EnvType::Number, &[]), "12", true),
+            (spec(EnvType::Number, &[]), "-1.5", true),
+            (spec(EnvType::Number, &[]), "abc", false),
+            (spec(EnvType::Number, &[]), "NaN", false),
+            (spec(EnvType::Number, &[]), "inf", false),
+            (spec(EnvType::Boolean, &[]), "true", true),
+            (spec(EnvType::Boolean, &[]), "false", true),
+            (spec(EnvType::Boolean, &[]), "TRUE", false),
+            (spec(EnvType::Boolean, &[]), "1", false),
+            (spec(EnvType::Enum, &["a", "b"]), "b", true),
+            (spec(EnvType::Enum, &["a", "b"]), "c", false),
+        ];
+        for (spec, value, expected) in checks {
+            assert_eq!(
+                spec.validate_value(value).is_ok(),
+                expected,
+                "{:?} {value}",
+                spec.kind
+            );
+        }
+
+        let mut required = spec(EnvType::String, &[]);
+        required.required = true;
+        assert!(required.validate_value("").is_err());
+        let error = spec(EnvType::Number, &[])
+            .validate_value("hunter2")
+            .unwrap_err();
+        assert!(!error.contains("hunter2"));
+    }
+
+    #[test]
+    fn a_conflicting_var_satisfies_a_required_one() {
+        let catalog = Catalog::parse(include_str!("../../../catalog.example.toml")).unwrap();
+        let server = catalog.get("taiga-stdio").unwrap();
+        let missing = |set: &[&str]| -> Vec<String> {
+            let set_vars: HashSet<&str> = set.iter().copied().collect();
+            server
+                .missing_required(&set_vars)
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+
+        assert_eq!(
+            missing(&[]),
+            [
+                "TAIGA_BASE_URL",
+                "TAIGA_USERNAME",
+                "TAIGA_PASSWORD",
+                "TAIGA_TOKEN"
+            ]
+        );
+        assert_eq!(missing(&["TAIGA_BASE_URL", "TAIGA_TOKEN"]), [""; 0]);
+        assert_eq!(
+            missing(&["TAIGA_BASE_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD"]),
+            [""; 0]
+        );
+        assert_eq!(
+            missing(&["TAIGA_BASE_URL", "TAIGA_USERNAME"]),
+            ["TAIGA_PASSWORD"]
+        );
     }
 
     #[test]
