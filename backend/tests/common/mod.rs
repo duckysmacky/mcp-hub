@@ -14,7 +14,7 @@ use mcp_hub::{
     app_state::AppState,
     build_router,
     catalog::{Catalog, install::ResolvedServer},
-    config::{Config, Settings},
+    config::{Config, Settings, SignupMode},
     supervisor::Supervisor,
 };
 use reqwest::Response;
@@ -28,9 +28,13 @@ pub fn config_at(settings: Settings, public_url: &str, allow_signup: bool) -> Ar
     // Real Argon2 costs would make the suite crawl.
     settings.password_kdf.memory_kib = 256;
     settings.password_kdf.iterations = 1;
+    settings.server.signup = if allow_signup {
+        SignupMode::Enabled
+    } else {
+        SignupMode::Disabled
+    };
     Arc::new(Config {
         public_url: public_url.parse().unwrap(),
-        allow_signup,
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         database: PgConnectOptions::new(),
         settings,

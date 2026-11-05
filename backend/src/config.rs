@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use url::{Host, Url};
 
@@ -15,7 +15,6 @@ use crate::crypto::KdfParams;
 /// environment, non-sensitive tuning from `settings.toml`.
 pub struct Config {
     pub public_url: PublicUrl,
-    pub allow_signup: bool,
     pub bind_addr: SocketAddr,
     pub database: PgConnectOptions,
     pub settings: Settings,
@@ -25,7 +24,6 @@ impl Config {
     pub fn from_env(settings: Settings) -> anyhow::Result<Self> {
         Ok(Self {
             public_url: required_env("PUBLIC_URL")?.parse()?,
-            allow_signup: parse_bool("ALLOW_SIGNUP", &optional_env("ALLOW_SIGNUP"))?,
             bind_addr: optional_env("BIND_ADDR")
                 .unwrap_or_else(|| "0.0.0.0:8080".to_owned())
                 .parse()
@@ -42,14 +40,6 @@ fn required_env(name: &str) -> anyhow::Result<String> {
 
 fn optional_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
-}
-
-fn parse_bool(name: &str, value: &Option<String>) -> anyhow::Result<bool> {
-    match value.as_deref() {
-        None | Some("false") => Ok(false),
-        Some("true") => Ok(true),
-        Some(_) => bail!("{name} must be true or false"),
-    }
 }
 
 fn database_options_from_env() -> anyhow::Result<PgConnectOptions> {
@@ -126,6 +116,7 @@ pub fn host_is_loopback(url: &Url) -> bool {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    pub server: ServerSettings,
     pub paths: PathSettings,
     pub runtimes: RuntimeSettings,
     pub limits: LimitSettings,
@@ -134,6 +125,22 @@ pub struct Settings {
     pub sessions: SessionSettings,
     pub oauth: OAuthSettings,
     pub password_kdf: PasswordKdfSettings,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServerSettings {
+    pub signup: SignupMode,
+}
+
+/// Who may create an account. Closed unless the operator opens it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SignupMode {
+    Enabled,
+    #[default]
+    Disabled,
+    InviteOnly,
 }
 
 #[derive(Debug, Deserialize)]
@@ -353,6 +360,28 @@ mod tests {
     fn dev_settings_file_is_valid() {
         let settings: Settings = toml::from_str(include_str!("../../settings.dev.toml")).unwrap();
         assert_eq!(settings.runtimes.bun, Path::new("/usr/bin/bun"));
+    }
+
+    #[test]
+    fn example_settings_file_lists_valid_keys() {
+        let settings: Settings =
+            toml::from_str(include_str!("../../settings.example.toml")).unwrap();
+        assert_eq!(settings.server.signup, SignupMode::Disabled);
+    }
+
+    #[test]
+    fn signup_is_closed_by_default_and_has_three_modes() {
+        assert_eq!(Settings::default().server.signup, SignupMode::Disabled);
+        for (text, mode) in [
+            ("enabled", SignupMode::Enabled),
+            ("disabled", SignupMode::Disabled),
+            ("invite-only", SignupMode::InviteOnly),
+        ] {
+            let settings: Settings =
+                toml::from_str(&format!("[server]\nsignup = \"{text}\"")).unwrap();
+            assert_eq!(settings.server.signup, mode);
+        }
+        assert!(toml::from_str::<Settings>("[server]\nsignup = \"maybe\"").is_err());
     }
 
     #[test]

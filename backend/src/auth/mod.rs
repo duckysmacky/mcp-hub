@@ -14,7 +14,8 @@ use zeroize::Zeroizing;
 use crate::{
     app_state::AppState,
     audit,
-    crypto::{self, Dek, KdfParams, Kek, Token, WrapKind},
+    config::SignupMode,
+    crypto::{self, Dek, INVITE_CODE_PREFIX, KdfParams, Kek, Token, WrapKind},
     db,
     error::ApiError,
 };
@@ -94,12 +95,12 @@ fn session_cookie(headers: &HeaderMap) -> Option<&str> {
 
 #[derive(Serialize)]
 struct AuthConfig {
-    signup_enabled: bool,
+    signup: SignupMode,
 }
 
 async fn config(State(state): State<AppState>) -> Json<AuthConfig> {
     Json(AuthConfig {
-        signup_enabled: state.config.allow_signup,
+        signup: state.config.settings.server.signup,
     })
 }
 
@@ -109,14 +110,20 @@ struct Credentials {
     password: Zeroizing<String>,
 }
 
+#[derive(Deserialize)]
+struct SignupRequest {
+    username: String,
+    password: Zeroizing<String>,
+    invite_code: Option<Zeroizing<String>>,
+}
+
 #[derive(Serialize)]
 struct UserResponse {
     id: i64,
     username: String,
 }
 
-fn validate_new_credentials(credentials: &Credentials) -> Result<(), ApiError> {
-    let username = &credentials.username;
+fn validate_new_credentials(username: &str, password: &str) -> Result<(), ApiError> {
     let username_is_valid = (1..=MAX_USERNAME_CHARS).contains(&username.chars().count())
         && username
             .chars()
@@ -126,7 +133,7 @@ fn validate_new_credentials(credentials: &Credentials) -> Result<(), ApiError> {
             "username must be 1-{MAX_USERNAME_CHARS} letters, digits, or - _ ."
         )));
     }
-    validate_new_password(&credentials.password)
+    validate_new_password(password)
 }
 
 fn validate_new_password(password: &str) -> Result<(), ApiError> {
@@ -141,14 +148,34 @@ fn validate_new_password(password: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Checks that the request may create an account. Returns the invite to claim, if any.
+async fn check_signup_allowed(
+    state: &AppState,
+    invite_code: Option<&str>,
+) -> Result<Option<Vec<u8>>, ApiError> {
+    match state.config.settings.server.signup {
+        SignupMode::Enabled => Ok(None),
+        SignupMode::Disabled => Err(ApiError::Forbidden("sign-up is disabled")),
+        SignupMode::InviteOnly => {
+            let hash = invite_code
+                .and_then(|code| Token::parse(INVITE_CODE_PREFIX, code))
+                .map(|code| code.hash())
+                .ok_or(ApiError::Forbidden(db::users::INVALID_INVITE))?;
+            if !db::invites::is_usable(&state.pool, &hash).await? {
+                return Err(ApiError::Forbidden(db::users::INVALID_INVITE));
+            }
+            Ok(Some(hash))
+        }
+    }
+}
+
 async fn signup(
     State(state): State<AppState>,
-    Json(credentials): Json<Credentials>,
+    Json(credentials): Json<SignupRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !state.config.allow_signup {
-        return Err(ApiError::Forbidden("sign-up is disabled"));
-    }
-    validate_new_credentials(&credentials)?;
+    let invite_code = credentials.invite_code.as_ref().map(|code| code.as_str());
+    let invite_hash = check_signup_allowed(&state, invite_code).await?;
+    validate_new_credentials(&credentials.username, &credentials.password)?;
 
     let params = state.config.settings.password_kdf.params();
     let kek_salt = crypto::generate_salt();
@@ -163,6 +190,7 @@ async fn signup(
             password_hash: &password_hash,
             kek_salt: &kek_salt,
             kek_params: params,
+            invite_hash: invite_hash.as_deref(),
         },
         |user_id| crypto::wrap_dek(&kek, &dek, WrapKind::Password, user_id, user_id),
     )

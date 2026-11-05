@@ -1,0 +1,51 @@
+# Non-sensitive tuning. Every key has a default and unknown keys are rejected.
+# Credentials belong in .env. See .context/DEPLOYMENT.md.
+
+[server]
+signup = "disabled"  # enabled, disabled, invite-only
+
+[paths]
+catalog  = "/etc/mcp-hub/catalog.toml"   # catalog.lock sits next to it
+packages = "/data/packages"
+scratch  = "/tmp/mcp-hub/scratch"
+static   = "/usr/share/mcp-hub/static"
+
+[runtimes]
+bun  = "/usr/local/bin/bun"
+node = "/usr/local/bin/node"
+uv   = "/usr/local/bin/uv"
+pip  = "/usr/local/bin/pip"
+
+[limits]
+max_processes_per_user           = 6
+max_sessions_per_instance        = 3
+max_processes_total              = 50
+max_spawns_per_user_per_minute   = 10
+max_pending_requests_per_session = 32
+idle_timeout_secs                = 600
+initialize_timeout_secs          = 30
+request_timeout_secs             = 300
+upstream_start_timeout_secs      = 15
+max_body_bytes                   = 4_194_304
+max_line_bytes                   = 8_388_608
+output_tail_bytes                = 65_536
+
+[http_mode]
+port_range = [41000, 41999]
+
+[network]
+self_addresses  = []       # the host's public IPs (net_guard: allowed only on 443/80)
+allow_http_urls = false
+
+[oauth]
+access_token_ttl_secs  = 3600
+refresh_token_ttl_secs = 2_592_000
+auth_code_ttl_secs     = 60
+
+[sessions]
+web_session_ttl_secs = 2_592_000
+
+[password_kdf]
+memory_kib  = 65536
+iterations  = 3
+parallelism = 1

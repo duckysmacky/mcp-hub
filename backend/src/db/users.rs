@@ -6,11 +6,15 @@ use crate::{
     error::{ApiError, conflict_on_duplicate},
 };
 
+pub const INVALID_INVITE: &str = "this invite code is not valid";
+
 pub struct NewUser<'a> {
     pub username: &'a str,
     pub password_hash: &'a str,
     pub kek_salt: &'a [u8],
     pub kek_params: KdfParams,
+    /// Consumed in the same transaction, so that a code can create only one account.
+    pub invite_hash: Option<&'a [u8]>,
 }
 
 pub struct UserCredentials {
@@ -49,6 +53,20 @@ pub async fn create(
     .fetch_one(&mut *transaction)
     .await
     .map_err(|error| conflict_on_duplicate(error, "username is taken"))?;
+
+    if let Some(invite_hash) = user.invite_hash {
+        let claimed = sqlx::query!(
+            "UPDATE invites SET used_at = now(), used_by = $2
+             WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now()",
+            invite_hash,
+            id,
+        )
+        .execute(&mut *transaction)
+        .await?;
+        if claimed.rows_affected() == 0 {
+            return Err(ApiError::Forbidden(INVALID_INVITE));
+        }
+    }
 
     sqlx::query!(
         "UPDATE users SET wrapped_dek = $1 WHERE id = $2",

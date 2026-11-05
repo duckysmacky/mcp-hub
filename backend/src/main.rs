@@ -6,7 +6,7 @@ use mcp_hub::{
     build_router,
     catalog::{Catalog, ServerTemplate, install::install_all, lock::CatalogLock},
     cli::{self, Command},
-    config::{Config, Settings},
+    config::{Config, Settings, SignupMode},
     db,
     supervisor::Supervisor,
 };
@@ -36,6 +36,10 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
+    if config.settings.server.signup == SignupMode::Enabled {
+        // Same-UID stdio children can read each other's env (SECURITY.md T3).
+        tracing::warn!("anyone who can reach this hub can sign up and run catalog servers");
+    }
     let pool = db::connect(config.database.clone()).await?;
     db::migrate(&pool).await?;
 

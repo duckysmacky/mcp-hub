@@ -89,7 +89,7 @@ async fn signup_respects_the_toggle(pool: PgPool) {
     let config = app.get("/api/auth/config", None).await;
     assert_eq!(
         config.json::<Value>().await.unwrap(),
-        json!({ "signup_enabled": false })
+        json!({ "signup": "disabled" })
     );
     assert_eq!(
         app.signup("alice", PASSWORD).await.status(),

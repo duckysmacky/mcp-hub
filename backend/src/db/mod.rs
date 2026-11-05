@@ -1,4 +1,5 @@
 pub mod instances;
+pub mod invites;
 pub mod oauth;
 pub mod users;
 pub mod web_sessions;

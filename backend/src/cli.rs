@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use serde_json::json;
 use sqlx::PgPool;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use zeroize::Zeroizing;
@@ -19,7 +20,7 @@ use crate::{
         lock::CatalogLock,
     },
     config::Config,
-    crypto::{self, Dek, KdfParams, Token, WrapKind},
+    crypto::{self, Dek, INVITE_CODE_PREFIX, KdfParams, Token, WrapKind},
     db,
     supervisor::STOP_CHANNEL,
 };
@@ -34,8 +35,15 @@ commands:
   user enable <username>
   user reset-password <username> [--yes]
                                   wipes that user's stored values and grants
+  invite create [--days <n>] [--note <text>]
+                                  print a single-use sign-up code (default: valid 7 days)
+  invite list
+  invite revoke <id>              only an unused invite can be revoked
   catalog lock [--output <path>]  resolve and record every enabled server's dependencies
   catalog reinstall [<server-id>] reinstall from the lockfile, stopping running processes";
+
+const DEFAULT_INVITE_DAYS: u32 = 7;
+const MAX_INVITE_DAYS: u32 = 3650;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -43,9 +51,22 @@ pub enum Command {
     UserList,
     UserDisable(String),
     UserEnable(String),
-    UserResetPassword { username: String, confirmed: bool },
-    CatalogLock { output: Option<PathBuf> },
-    CatalogReinstall { server_id: Option<String> },
+    UserResetPassword {
+        username: String,
+        confirmed: bool,
+    },
+    InviteCreate {
+        valid_days: u32,
+        note: Option<String>,
+    },
+    InviteList,
+    InviteRevoke(i64),
+    CatalogLock {
+        output: Option<PathBuf>,
+    },
+    CatalogReinstall {
+        server_id: Option<String>,
+    },
 }
 
 /// Parses arguments into the settings path and the command to run.
@@ -69,6 +90,11 @@ pub fn parse(args: &[String]) -> anyhow::Result<(Option<PathBuf>, Command)> {
             username: (*username).to_owned(),
             confirmed: true,
         },
+        ["invite", "create", flags @ ..] => parse_invite_create(flags)?,
+        ["invite", "list"] => Command::InviteList,
+        ["invite", "revoke", id] => {
+            Command::InviteRevoke(id.parse().context("id must be a number")?)
+        }
         ["catalog", "lock"] => Command::CatalogLock { output: None },
         ["catalog", "lock", "--output", path] => Command::CatalogLock {
             output: Some(PathBuf::from(path)),
@@ -82,6 +108,29 @@ pub fn parse(args: &[String]) -> anyhow::Result<(Option<PathBuf>, Command)> {
     Ok((settings, command))
 }
 
+fn parse_invite_create(mut flags: &[&str]) -> anyhow::Result<Command> {
+    let mut valid_days = DEFAULT_INVITE_DAYS;
+    let mut note = None;
+    loop {
+        match flags {
+            [] => return Ok(Command::InviteCreate { valid_days, note }),
+            ["--days", days, rest @ ..] => {
+                valid_days = days
+                    .parse()
+                    .ok()
+                    .filter(|days| (1..=MAX_INVITE_DAYS).contains(days))
+                    .with_context(|| format!("--days must be 1-{MAX_INVITE_DAYS}"))?;
+                flags = rest;
+            }
+            ["--note", text, rest @ ..] => {
+                note = Some((*text).to_owned());
+                flags = rest;
+            }
+            _ => bail!("{USAGE}"),
+        }
+    }
+}
+
 /// Runs an operator command. Results go to stdout, logs to stderr.
 pub async fn run(command: Command, config: &Config) -> anyhow::Result<()> {
     // Locking is done ahead of deploying, so it must not need the database.
@@ -93,6 +142,39 @@ pub async fn run(command: Command, config: &Config) -> anyhow::Result<()> {
     match command {
         Command::Serve | Command::CatalogLock { .. } => {
             bail!("not an operator command that needs the database")
+        }
+        Command::InviteCreate { valid_days, note } => {
+            let code = create_invite(&pool, valid_days, note.as_deref()).await?;
+            println!("invite code (valid {valid_days} days): {}", code.as_str());
+            println!("it is not shown again");
+        }
+        Command::InviteList => {
+            for invite in db::invites::list(&pool).await? {
+                let status = match invite.used_at {
+                    Some(at) => format!("used {}", format_time(at)),
+                    None => format!("expires {}", format_time(invite.expires_at)),
+                };
+                println!(
+                    "{}\tcreated {}\t{status}\t{}",
+                    invite.id,
+                    format_time(invite.created_at),
+                    invite.note.unwrap_or_default()
+                );
+            }
+        }
+        Command::InviteRevoke(id) => {
+            if !db::invites::revoke(&pool, id).await? {
+                bail!("no unused invite with id {id}");
+            }
+            audit::record(
+                &pool,
+                None,
+                None,
+                "invite_revoked",
+                Some(json!({ "invite_id": id })),
+            )
+            .await;
+            println!("invite {id} is revoked");
         }
         Command::CatalogReinstall { server_id } => {
             reinstall_catalog(&pool, config, server_id.as_deref()).await?;
@@ -202,6 +284,25 @@ async fn find_user_id(pool: &PgPool, username: &str) -> anyhow::Result<i64> {
     Ok(user.id)
 }
 
+/// Creates an invite and returns its code. Only a hash of the code is stored.
+pub async fn create_invite(
+    pool: &PgPool,
+    valid_days: u32,
+    note: Option<&str>,
+) -> anyhow::Result<Zeroizing<String>> {
+    let code = Token::generate();
+    let id = db::invites::create(pool, &code.hash(), note, valid_days).await?;
+    audit::record(
+        pool,
+        None,
+        None,
+        "invite_created",
+        Some(json!({ "invite_id": id })),
+    )
+    .await;
+    Ok(code.encode(INVITE_CODE_PREFIX))
+}
+
 /// Asks the running hub, if there is one, to kill matching processes.
 pub async fn notify_stop(pool: &PgPool, payload: &str) -> anyhow::Result<()> {
     sqlx::query!("SELECT pg_notify($1, $2)", STOP_CHANNEL, payload)
@@ -286,8 +387,27 @@ mod tests {
                 confirmed: true
             }
         );
+        assert_eq!(
+            parsed(&["invite", "create", "--note", "for bob", "--days", "3"])
+                .unwrap()
+                .1,
+            Command::InviteCreate {
+                valid_days: 3,
+                note: Some("for bob".to_owned())
+            }
+        );
+        assert_eq!(
+            parsed(&["invite", "create"]).unwrap().1,
+            Command::InviteCreate {
+                valid_days: DEFAULT_INVITE_DAYS,
+                note: None
+            }
+        );
         for invalid in [
-            &["--settings"][..],
+            &["invite", "create", "--days", "0"][..],
+            &["invite", "create", "--days", "x"],
+            &["invite", "revoke", "x"],
+            &["--settings"],
             &["nonsense"],
             &["user"],
             &["user", "disable"],

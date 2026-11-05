@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code_hash FROM invites",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "code_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "11781c2325ecc8d95eb107b48a56248a1b51aee8d92269fea79999792ae83fd0"
+}

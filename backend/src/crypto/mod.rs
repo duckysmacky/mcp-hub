@@ -24,6 +24,7 @@ const ENV_AAD_PREFIX: &[u8] = b"mcp-hub/env/v1";
 
 pub const ACCESS_TOKEN_PREFIX: &str = "mcphub_at_";
 pub const REFRESH_TOKEN_PREFIX: &str = "mcphub_rt_";
+pub const INVITE_CODE_PREFIX: &str = "mcphub_inv_";
 
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {

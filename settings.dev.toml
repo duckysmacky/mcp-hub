@@ -1,4 +1,7 @@
 # Local development settings: cargo run -- --settings ../settings.dev.toml
+[server]
+signup = "enabled"
+
 [paths]
 catalog  = "../catalog.example.toml"
 packages = "../.dev/packages"
