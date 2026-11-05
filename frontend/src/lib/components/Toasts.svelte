@@ -7,7 +7,6 @@
 
 <div class="cb-toasts">
 	{#each toasts.items as toast (toast.id)}
-		<!-- svelte-ignore a11y_no_static_element_interactions: hover only pauses the timer -->
 		<div
 			class={['cb-toast', `cb-toast--${toast.tone}`]}
 			role={toast.tone === 'err' ? 'alert' : 'status'}

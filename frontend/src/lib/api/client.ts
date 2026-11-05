@@ -30,7 +30,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 		if (response.status === 401 && path !== '/auth/login' && path !== '/auth/me') {
 			const here = location.pathname + location.search;
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- resolved, plus a query
-			await goto(`${resolve('/login')}?next=${encodeURIComponent(here)}`);
+			await goto(`${resolve('/(card)/login')}?next=${encodeURIComponent(here)}`);
 		}
 		throw new ApiError(response.status, await readError(response));
 	}
