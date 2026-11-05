@@ -24,7 +24,8 @@
 
 <!--
 	Mounted only while needed. The native dialog traps focus, handles Escape, and focuses Cancel
-	because it comes first; close() on the way out returns focus to whatever opened it.
+	because it comes first. Focus goes back by hand, because this element is already detached by
+	the time close() runs.
 -->
 <dialog
 	class="cb-dialog"
@@ -40,8 +41,14 @@
 		}
 	}}
 	{@attach (dialog) => {
+		const opener = document.activeElement;
 		dialog.showModal();
-		return () => dialog.close();
+		return () => {
+			dialog.close();
+			if (opener instanceof HTMLElement) {
+				opener.focus();
+			}
+		};
 	}}
 >
 	<div class="cb-dialog-head">
