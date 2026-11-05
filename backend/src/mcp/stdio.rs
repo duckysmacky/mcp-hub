@@ -72,6 +72,7 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
         Ok(session) => session,
         Err(error) => return start_failure(&id, error),
     };
+    target.audit("process_spawned", None).await;
 
     let response = match session.request(message).await {
         Ok(response) => response,

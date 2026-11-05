@@ -1,5 +1,6 @@
 pub mod api;
 pub mod app_state;
+pub mod audit;
 pub mod auth;
 pub mod bridge;
 pub mod catalog;

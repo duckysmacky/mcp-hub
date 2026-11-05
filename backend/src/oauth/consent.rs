@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::Serialize;
+use serde_json::json;
 use url::Url;
 
 use super::{
@@ -14,6 +15,7 @@ use super::{
 };
 use crate::{
     app_state::AppState,
+    audit,
     auth::CurrentSession,
     config::host_is_loopback,
     crypto::{self, Token, WrapKind},
@@ -122,6 +124,15 @@ async fn approve(
         &pending.scope,
     )
     .await?;
+
+    audit::record(
+        &state.pool,
+        Some(session.user_id),
+        Some(instance.id),
+        "grant_approved",
+        Some(json!({ "grant_id": grant_id, "client_id": pending.client_id })),
+    )
+    .await;
 
     let code = Token::generate();
     let code_kek = code.kek(WrapKind::AuthCode)?;

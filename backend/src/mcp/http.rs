@@ -90,6 +90,11 @@ async fn initialize(
     }
 
     let secrets = secret_values(target.template, &values);
+    let already_running = target
+        .state
+        .supervisor
+        .upstream(target.instance.id)
+        .is_some();
     let started = target
         .state
         .supervisor
@@ -108,6 +113,9 @@ async fn initialize(
         Ok(upstream) => upstream,
         Err(error) => return start_failure(&id, error),
     };
+    if !already_running {
+        target.audit("process_spawned", None).await;
+    }
     if !upstream.wait_ready().await {
         return Ok(json_error(
             &id,

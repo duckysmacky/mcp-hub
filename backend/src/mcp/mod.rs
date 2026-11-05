@@ -13,10 +13,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     app_state::AppState,
+    audit,
     bridge::json_rpc_error,
     catalog::{ServerMode, ServerTemplate, install::ResolvedServer},
     crypto, db,
@@ -177,6 +178,17 @@ async fn resolve<'a>(
 }
 
 impl Target<'_> {
+    async fn audit(&self, event: &str, detail: Option<Value>) {
+        audit::record(
+            &self.state.pool,
+            Some(self.auth.user_id),
+            Some(self.instance.id),
+            event,
+            detail,
+        )
+        .await;
+    }
+
     /// Decrypts every value of this instance that the catalog still allows.
     async fn decrypt_env(&self) -> Result<Vec<EnvValue>, McpError> {
         let dek = self.auth.dek()?;
@@ -271,6 +283,12 @@ async fn handle_post(
         method = message["method"].as_str().unwrap_or("response"),
         "mcp request"
     );
+    if message["method"] == "tools/call" {
+        let tool = message["params"]["name"].as_str().unwrap_or_default();
+        target
+            .audit("tool_call", Some(json!({ "tool": audit::bounded(tool) })))
+            .await;
+    }
     match target.template.mode {
         ServerMode::Stdio => stdio::post(&target, &headers, kind, message).await,
         ServerMode::Http => http::post(&target, &headers, kind, message).await,

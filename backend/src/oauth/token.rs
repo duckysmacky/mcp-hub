@@ -12,6 +12,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     app_state::AppState,
+    audit,
     crypto::{self, ACCESS_TOKEN_PREFIX, Dek, REFRESH_TOKEN_PREFIX, Token, WrapKind},
     db,
     db::oauth::{CodeRecord, NewToken, RefreshRecord},
@@ -106,6 +107,14 @@ async fn exchange_code(
     if record.is_used {
         tracing::warn!(grant_id = record.grant_id, "authorization code replayed");
         db::oauth::revoke_tokens_from_code(&state.pool, record.id).await?;
+        audit::record(
+            &state.pool,
+            Some(record.user_id),
+            None,
+            "code_replayed",
+            Some(json!({ "grant_id": record.grant_id })),
+        )
+        .await;
         return Err(INVALID_GRANT);
     }
     let matches_request = record.client_id == *client_id
@@ -220,6 +229,14 @@ async fn reject_reuse(
         "refresh token reused, revoking the grant"
     );
     db::oauth::revoke_grant(&state.pool, record.grant_id).await?;
+    audit::record(
+        &state.pool,
+        Some(record.user_id),
+        None,
+        "refresh_token_reused",
+        Some(json!({ "grant_id": record.grant_id })),
+    )
+    .await;
     Err(INVALID_GRANT)
 }
 

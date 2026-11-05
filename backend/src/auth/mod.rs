@@ -13,6 +13,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     app_state::AppState,
+    audit,
     crypto::{self, Dek, KdfParams, Token, WrapKind},
     db,
     error::ApiError,
@@ -170,6 +171,7 @@ async fn signup(
     )
     .await?;
 
+    audit::record(&state.pool, Some(id), None, "signup", None).await;
     let user = UserResponse {
         id,
         username: credentials.username,
@@ -188,10 +190,12 @@ async fn login(
         // Spend the same time as a real check, so usernames can't be probed by timing.
         let params = state.config.settings.password_kdf.params();
         spawn_blocking(move || crypto::hash_password(&credentials.password, params)).await??;
+        // No username in the detail: people type their password there by mistake.
+        audit::record(&state.pool, None, None, "login_failed", None).await;
         return Err(ApiError::InvalidCredentials);
     };
 
-    let dek = unwrap_with_password(
+    let unwrapped = unwrap_with_password(
         credentials.password,
         user.password_hash,
         user.kek_salt,
@@ -199,7 +203,11 @@ async fn login(
         user.wrapped_dek,
         user.id,
     )
-    .await?;
+    .await;
+    if matches!(unwrapped, Err(ApiError::InvalidCredentials)) {
+        audit::record(&state.pool, Some(user.id), None, "login_failed", None).await;
+    }
+    let dek = unwrapped?;
 
     let token = Token::generate();
     let session_kek = token.kek(WrapKind::WebSession)?;
@@ -215,6 +223,7 @@ async fn login(
     })
     .await?;
 
+    audit::record(&state.pool, Some(user.id), None, "login", None).await;
     let cookie = session_cookie_header(&state, &token.encode(""), ttl);
     let body = UserResponse {
         id: user.id,
@@ -263,6 +272,7 @@ async fn logout(
     session: CurrentSession,
 ) -> Result<impl IntoResponse, ApiError> {
     db::web_sessions::delete(&state.pool, session.id).await?;
+    audit::record(&state.pool, Some(session.user_id), None, "logout", None).await;
     let cookie = session_cookie_header(&state, "", 0);
     Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]))
 }

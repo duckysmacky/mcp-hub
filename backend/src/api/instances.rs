@@ -9,11 +9,13 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use time::OffsetDateTime;
 use zeroize::Zeroizing;
 
 use crate::{
     app_state::AppState,
+    audit,
     auth::CurrentSession,
     catalog::{EnvSpec, RuntimeKind, ServerMode, ServerTemplate},
     crypto, db,
@@ -253,6 +255,15 @@ async fn create_instance(
         &request.server_id,
     )
     .await?;
+    let detail = json!({ "server_id": instance.server_id, "slug": instance.slug });
+    audit::record(
+        &state.pool,
+        Some(session.user_id),
+        Some(instance.id),
+        "instance_created",
+        Some(detail),
+    )
+    .await;
     Ok((
         StatusCode::CREATED,
         Json(describe(&state, &session, instance).await?),
@@ -300,6 +311,15 @@ async fn delete_instance(
         return Err(ApiError::NotFound);
     }
     state.supervisor.forget_instance(id);
+    let detail = json!({ "instance_id": id });
+    audit::record(
+        &state.pool,
+        Some(session.user_id),
+        None,
+        "instance_deleted",
+        Some(detail),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -346,6 +366,14 @@ async fn set_env_value(
     let dek = session.dek()?;
     let ciphertext = crypto::encrypt_env(&dek, id, &var, &request.value)?;
     db::instances::set_env(&state.pool, id, &var, &ciphertext).await?;
+    audit::record(
+        &state.pool,
+        Some(session.user_id),
+        Some(id),
+        "env_set",
+        Some(json!({ "var": var })),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -358,6 +386,14 @@ async fn delete_env_value(
     if !db::instances::delete_env(&state.pool, id, &var).await? {
         return Err(ApiError::NotFound);
     }
+    audit::record(
+        &state.pool,
+        Some(session.user_id),
+        Some(id),
+        "env_removed",
+        Some(json!({ "var": var })),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

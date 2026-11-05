@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT string_agg(event || ' ' || COALESCE(detail::text, ''), '\\n') AS \"text!\"\n           FROM audit_events",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "text!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8f1bf3fdc1d150bea7a5690d66576a1e455ff12ed52bb366a8d6a5f1d355289c"
+}
