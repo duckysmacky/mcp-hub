@@ -1,0 +1,89 @@
+/* Cobalt - generated from tokens.json */
+:root {
+  color-scheme: dark;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg: #0b0b0c;
+  --surface-1: #111113;
+  --surface-2: #18181b;
+  --surface-3: #222226;
+  --input-bg: #0b0b0c;
+  --code-bg: #08080a;
+  --border: #26262b;
+  --border-strong: #3a3a41;
+  --border-control: #6b6b75;
+  --text: #ededef;
+  --text-2: #a8a8b1;
+  --text-3: #8a8a94;
+  --accent: #5b93ff;
+  --accent-hover: #7aa8ff;
+  --accent-press: #4a7fe6;
+  --accent-fg: #0b0b0c;
+  --accent-weak: rgba(91, 147, 255, 0.12);
+  --focus: var(--accent);
+  --ok: #3fb950;
+  --ok-bg: rgba(63, 185, 80, 0.10);
+  --warn: #e3b341;
+  --warn-bg: rgba(227, 179, 65, 0.08);
+  --err: #ff6b61;
+  --err-bg: rgba(255, 107, 97, 0.10);
+  --idle: var(--text-2);
+  --scrim: rgba(0, 0, 0, 0.64);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --radius-0: 0px;
+  --radius: 2px;
+  --ctl-sm: 32px;
+  --ctl: 40px;
+  --ctl-lg: 48px;
+  --touch: 44px;
+  --row: 48px;
+  --panel-head: 48px;
+  --nav-h: 56px;
+  --container: 1200px;
+  --card-narrow: 440px;
+  --side-col: 360px;
+  --bw: 1px;
+  --bw-focus: 2px;
+  --z-nav: 10;
+  --z-dialog: 100;
+  --z-toast: 200;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #fafaf9;
+  --surface-1: #ffffff;
+  --surface-2: #f3f3f1;
+  --surface-3: #e9e9e6;
+  --input-bg: #ffffff;
+  --code-bg: #f3f3f1;
+  --border: #e2e2de;
+  --border-strong: #c9c9c4;
+  --border-control: #8c8c94;
+  --text: #111113;
+  --text-2: #4e4e57;
+  --text-3: #66666f;
+  --accent: #1d56d1;
+  --accent-hover: #1847ae;
+  --accent-press: #143b91;
+  --accent-fg: #ffffff;
+  --accent-weak: rgba(29, 86, 209, 0.08);
+  --ok: #1a7f37;
+  --ok-bg: rgba(26, 127, 55, 0.08);
+  --warn: #8a6100;
+  --warn-bg: rgba(212, 160, 23, 0.10);
+  --err: #c4232d;
+  --err-bg: rgba(196, 35, 45, 0.07);
+  --scrim: rgba(17, 17, 19, 0.40);
+}

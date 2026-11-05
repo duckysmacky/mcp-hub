@@ -7,3 +7,11 @@ bun.lockb
 
 # Miscellaneous
 /static/
+
+# Vendored agent docs
+.github/
+.claude/
+
+# Vendored from the Cobalt design system
+src/lib/styles/tokens.css
+src/lib/styles/cobalt.css

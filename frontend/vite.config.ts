@@ -1,8 +1,17 @@
+import type { ClientRequest } from 'node:http';
 import { defineConfig } from 'vitest/config';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 
 const backend = 'http://127.0.0.1:8080';
+
+// The backend's CSRF check wants its own PUBLIC_URL as the Origin, not the dev server's.
+const proxied = {
+	target: backend,
+	configure: (proxy: {
+		on: (event: 'proxyReq', handler: (request: ClientRequest) => void) => void;
+	}) => proxy.on('proxyReq', (request) => request.setHeader('origin', 'http://localhost:8080'))
+};
 
 export default defineConfig({
 	plugins: [
@@ -17,10 +26,10 @@ export default defineConfig({
 	],
 	server: {
 		proxy: {
-			'/api': backend,
-			'/oauth': backend,
-			'/mcp': backend,
-			'/.well-known': backend
+			'/api': proxied,
+			'/oauth': proxied,
+			'/mcp': proxied,
+			'/.well-known': proxied
 		}
 	},
 	test: {

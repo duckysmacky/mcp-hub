@@ -4,9 +4,20 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+		<script>
+			// Before first paint, so the page never flashes the wrong theme.
+			let savedTheme = null;
+			try {
+				savedTheme = localStorage.getItem('theme');
+			} catch {
+				// Storage can be blocked: follow the OS.
+			}
+			document.documentElement.dataset.theme =
+				savedTheme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		</script>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<body class="cb-root" data-sveltekit-preload-data="hover">
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>
