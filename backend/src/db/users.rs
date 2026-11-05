@@ -1,4 +1,5 @@
 use sqlx::{PgPool, types::Json};
+use time::OffsetDateTime;
 
 use crate::{
     crypto::{CryptoError, KdfParams},
@@ -19,6 +20,14 @@ pub struct UserCredentials {
     pub kek_salt: Vec<u8>,
     pub kek_params: Json<KdfParams>,
     pub wrapped_dek: Vec<u8>,
+    pub is_disabled: bool,
+}
+
+pub struct UserSummary {
+    pub id: i64,
+    pub username: String,
+    pub created_at: OffsetDateTime,
+    pub disabled_at: Option<OffsetDateTime>,
 }
 
 /// Creates a user. The DEK wrap is bound to the row id, so `wrap` runs once it's known.
@@ -56,7 +65,8 @@ pub async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<UserCredentials
     sqlx::query_as!(
         UserCredentials,
         r#"SELECT id, username, password_hash, kek_salt,
-                  kek_params AS "kek_params: Json<KdfParams>", wrapped_dek
+                  kek_params AS "kek_params: Json<KdfParams>", wrapped_dek,
+                  disabled_at IS NOT NULL AS "is_disabled!"
            FROM users WHERE id = $1"#,
         id,
     )
@@ -108,10 +118,93 @@ pub async fn find_by_username(
     sqlx::query_as!(
         UserCredentials,
         r#"SELECT id, username, password_hash, kek_salt,
-                  kek_params AS "kek_params: Json<KdfParams>", wrapped_dek
+                  kek_params AS "kek_params: Json<KdfParams>", wrapped_dek,
+                  disabled_at IS NOT NULL AS "is_disabled!"
            FROM users WHERE lower(username) = lower($1)"#,
         username,
     )
     .fetch_optional(pool)
     .await
+}
+
+pub async fn list(pool: &PgPool) -> Result<Vec<UserSummary>, sqlx::Error> {
+    sqlx::query_as!(
+        UserSummary,
+        "SELECT id, username, created_at, disabled_at FROM users ORDER BY id"
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Locks a user out: their sessions and grants go, along with every DEK wrap in them.
+pub async fn disable(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query!(
+        "UPDATE users SET disabled_at = now() WHERE id = $1 AND disabled_at IS NULL",
+        user_id,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    delete_access(&mut transaction, user_id).await?;
+    transaction.commit().await
+}
+
+/// Lets a user log in again. Their old grants stay gone.
+pub async fn enable(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE users SET disabled_at = NULL WHERE id = $1", user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// An operator's password reset. The old DEK can't be recovered, so everything encrypted
+/// under it and everything that wraps it is deleted (SECRETS.md).
+pub async fn reset_password(
+    pool: &PgPool,
+    user_id: i64,
+    password: NewPassword<'_>,
+) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query!(
+        "UPDATE users SET password_hash = $2, kek_salt = $3, kek_params = $4, wrapped_dek = $5
+         WHERE id = $1",
+        user_id,
+        password.password_hash,
+        password.kek_salt,
+        Json(password.kek_params) as _,
+        password.wrapped_dek,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM instance_env
+         WHERE instance_id IN (SELECT id FROM instances WHERE user_id = $1)",
+        user_id,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "UPDATE instances
+         SET enabled = false, needs_attention = 'secrets_reset', updated_at = now()
+         WHERE user_id = $1",
+        user_id,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    delete_access(&mut transaction, user_id).await?;
+    transaction.commit().await
+}
+
+async fn delete_access(
+    connection: &mut sqlx::PgConnection,
+    user_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM web_sessions WHERE user_id = $1", user_id)
+        .execute(&mut *connection)
+        .await?;
+    // Tokens and codes cascade from their grant.
+    sqlx::query!("DELETE FROM oauth_grants WHERE user_id = $1", user_id)
+        .execute(&mut *connection)
+        .await?;
+    Ok(())
 }

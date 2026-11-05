@@ -1,32 +1,41 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use mcp_hub::{
     app_state::AppState,
     build_router,
     catalog::{Catalog, ServerTemplate, install::install_all},
+    cli::{self, Command},
     config::{Config, Settings},
     db,
     supervisor::Supervisor,
 };
 use tokio::signal::unix::{SignalKind, signal};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, fmt::writer::BoxMakeWriter};
 
 const DEFAULT_SETTINGS_PATH: &str = "/etc/mcp-hub/settings.toml";
 const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings_arg = parse_settings_arg()?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (settings_path, command) = cli::parse(&args)?;
     // In production the variables come from the container's environment.
     let _ = dotenvy::dotenv();
-    init_tracing();
+    init_tracing(command == Command::Serve);
 
-    let settings = match &settings_arg {
+    let settings = match &settings_path {
         Some(path) => Settings::load(path, true)?,
         None => Settings::load(DEFAULT_SETTINGS_PATH.as_ref(), false)?,
     };
     let config = Arc::new(Config::from_env(settings)?);
+    match command {
+        Command::Serve => serve(config).await,
+        command => cli::run(command, &config).await,
+    }
+}
+
+async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     let pool = db::connect(config.database.clone()).await?;
     db::migrate(&pool).await?;
 
@@ -55,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     let supervisor = Supervisor::new(config.clone());
     supervisor.spawn_reaper();
+    supervisor.spawn_stop_listener(pool.clone());
     let state = AppState {
         config,
         pool: pool.clone(),
@@ -82,24 +92,17 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse_settings_arg() -> anyhow::Result<Option<PathBuf>> {
-    let mut args = std::env::args().skip(1);
-    let settings_path = match args.next().as_deref() {
-        None => None,
-        Some("--settings") => Some(PathBuf::from(
-            args.next().context("--settings needs a path")?,
-        )),
-        Some(other) => bail!("unknown argument {other}"),
-    };
-    if args.next().is_some() {
-        bail!("too many arguments");
-    }
-    Ok(settings_path)
-}
-
-fn init_tracing() {
+/// Operator commands log to stderr, so that their stdout is only their result.
+fn init_tracing(to_stdout: bool) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = tracing_subscriber::fmt().with_env_filter(filter);
+    let writer = if to_stdout {
+        BoxMakeWriter::new(std::io::stdout)
+    } else {
+        BoxMakeWriter::new(std::io::stderr)
+    };
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(writer);
     if cfg!(debug_assertions) {
         subscriber.pretty().init();
     } else {

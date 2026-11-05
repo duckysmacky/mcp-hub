@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE instances\n         SET enabled = false, needs_attention = 'secrets_reset', updated_at = now()\n         WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b016a79e50f05db72e3977a06837e1d0f994d2876ffd62a939bd598d30dec9c0"
+}

@@ -417,6 +417,7 @@ async fn start_instance(
         )));
     }
     db::instances::set_enabled(&state.pool, session.user_id, id, true).await?;
+    db::instances::clear_secrets_reset(&state.pool, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

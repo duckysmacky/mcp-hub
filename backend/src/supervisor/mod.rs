@@ -9,6 +9,7 @@ use std::{
 };
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use sqlx::{PgPool, postgres::PgListener};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -22,6 +23,11 @@ use crate::{
     process::{ChildSpec, EnvValue, InstanceOutput, build_child_command, create_scratch_dir},
 };
 
+/// The Postgres channel the operator CLI uses to reach the running hub, with a payload of
+/// `user:<id>` or `server:<catalog id>`. A hub that's down has no children to stop.
+pub const STOP_CHANNEL: &str = "mcp_hub_stop";
+
+const LISTENER_RETRY: Duration = Duration::from_secs(5);
 const REAPER_INTERVAL: Duration = Duration::from_secs(30);
 const SPAWN_WINDOW: Duration = Duration::from_secs(60);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -480,6 +486,88 @@ impl Supervisor {
         }
         // The operator or user acted, so the next start gets a clean slate.
         registry.crashes.remove(&instance_id);
+    }
+
+    /// Kills every process of a user.
+    pub fn stop_user(&self, user_id: i64) {
+        let instance_ids: Vec<i64> = {
+            let registry = self.registry();
+            let sessions = registry
+                .sessions
+                .values()
+                .filter(|session| session.owner_user_id == user_id)
+                .map(|session| session.instance_id);
+            let upstreams = registry
+                .upstreams
+                .values()
+                .filter(|upstream| upstream.owner_user_id == user_id)
+                .map(|upstream| upstream.instance_id);
+            sessions.chain(upstreams).collect()
+        };
+        for instance_id in instance_ids {
+            self.stop_instance(instance_id);
+        }
+    }
+
+    /// Runs what the operator CLI asks for until shutdown. `PgListener` reconnects itself
+    /// on its next `recv` after a lost connection.
+    pub fn spawn_stop_listener(self: &Arc<Self>, pool: PgPool) {
+        let supervisor = self.clone();
+        tokio::spawn(async move {
+            while !supervisor.shutting_down.is_cancelled() {
+                let mut listener = match PgListener::connect_with(&pool).await {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        tracing::error!(%error, "could not connect the stop listener");
+                        tokio::select! {
+                            () = supervisor.shutting_down.cancelled() => return,
+                            () = tokio::time::sleep(LISTENER_RETRY) => continue,
+                        }
+                    }
+                };
+                if let Err(error) = listener.listen(STOP_CHANNEL).await {
+                    tracing::error!(%error, "could not listen for stop requests");
+                    tokio::select! {
+                        () = supervisor.shutting_down.cancelled() => return,
+                        () = tokio::time::sleep(LISTENER_RETRY) => continue,
+                    }
+                }
+                loop {
+                    let notification = tokio::select! {
+                        () = supervisor.shutting_down.cancelled() => return,
+                        notification = listener.recv() => notification,
+                    };
+                    match notification {
+                        Ok(notification) => {
+                            supervisor.handle_stop(&pool, notification.payload()).await
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "the stop listener lost its connection");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async fn handle_stop(&self, pool: &PgPool, payload: &str) {
+        match payload.split_once(':') {
+            Some(("user", user_id)) => {
+                if let Ok(user_id) = user_id.parse() {
+                    tracing::info!(user_id, "the operator stopped a user's processes");
+                    self.stop_user(user_id);
+                }
+            }
+            Some(("server", server_id)) => {
+                tracing::info!(server_id, "the operator stopped a server's processes");
+                match crate::db::instances::ids_of_server(pool, server_id).await {
+                    Ok(ids) => ids.into_iter().for_each(|id| self.stop_instance(id)),
+                    Err(error) => tracing::error!(%error, "could not look up a server's instances"),
+                }
+            }
+            _ => tracing::warn!("ignoring an unknown stop request"),
+        }
     }
 
     /// Kills an instance's processes and drops what's kept about it, once it's deleted.

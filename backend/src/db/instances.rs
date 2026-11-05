@@ -188,6 +188,25 @@ pub async fn sync_with_catalog(
     Ok(())
 }
 
+/// Clears the flag left by a password reset, once the owner starts the instance again.
+pub async fn clear_secrets_reset(pool: &PgPool, id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE instances SET needs_attention = NULL
+         WHERE id = $1 AND needs_attention = 'secrets_reset'",
+        id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The ids of every instance of a catalog server, whoever owns them.
+pub async fn ids_of_server(pool: &PgPool, server_id: &str) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT id FROM instances WHERE server_id = $1", server_id)
+        .fetch_all(pool)
+        .await
+}
+
 /// The caller must have checked that the instance belongs to the user.
 pub async fn set_env(
     pool: &PgPool,

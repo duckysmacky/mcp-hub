@@ -205,6 +205,11 @@ async fn login(
         audit::record(&state.pool, Some(user.id), None, "login_failed", None).await;
     }
     let dek = unwrapped?;
+    // Checked after the password, so this can't tell anyone that the account exists.
+    if user.is_disabled {
+        audit::record(&state.pool, Some(user.id), None, "login_failed", None).await;
+        return Err(ApiError::InvalidCredentials);
+    }
 
     let token = Token::generate();
     let session_kek = token.kek(WrapKind::WebSession)?;
@@ -230,7 +235,7 @@ async fn login(
 }
 
 /// The verification hash and the KEK of a new password.
-async fn hash_new_password(
+pub async fn hash_new_password(
     password: Zeroizing<String>,
     salt: Vec<u8>,
     params: KdfParams,

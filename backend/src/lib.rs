@@ -4,6 +4,7 @@ pub mod audit;
 pub mod auth;
 pub mod bridge;
 pub mod catalog;
+pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod db;

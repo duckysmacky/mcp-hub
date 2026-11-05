@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, username, password_hash, kek_salt,\n                  kek_params AS \"kek_params: Json<KdfParams>\", wrapped_dek\n           FROM users WHERE lower(username) = lower($1)",
+  "query": "SELECT id, username, password_hash, kek_salt,\n                  kek_params AS \"kek_params: Json<KdfParams>\", wrapped_dek,\n                  disabled_at IS NOT NULL AS \"is_disabled!\"\n           FROM users WHERE lower(username) = lower($1)",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,12 @@
             "name": "wrapped_dek"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "is_disabled!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -81,8 +87,9 @@
       false,
       false,
       false,
-      false
+      false,
+      null
     ]
   },
-  "hash": "7d82b6ea6a013d483f8a3c37d3a10bd500d5c5db6f9572bf767139ad225eee2d"
+  "hash": "850cbe628145346dab6671beafb0ef4bfa65706f2da1bfc372a5cc8b939ee17a"
 }
