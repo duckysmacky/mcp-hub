@@ -5,12 +5,14 @@ use mcp_hub::{
     app_state::AppState,
     build_router,
     catalog::{Catalog, ServerTemplate, install::install_all, lock::CatalogLock},
+    cleanup,
     cli::{self, Command},
     config::{Config, Settings, SignupMode},
     db,
     supervisor::Supervisor,
 };
 use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, fmt::writer::BoxMakeWriter};
 
 const DEFAULT_SETTINGS_PATH: &str = "/etc/mcp-hub/settings.toml";
@@ -74,6 +76,12 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     let supervisor = Supervisor::new(config.clone());
     supervisor.spawn_reaper();
     supervisor.spawn_stop_listener(pool.clone());
+    let cleanup_shutdown = CancellationToken::new();
+    cleanup::spawn(
+        pool.clone(),
+        config.settings.audit.retention_days,
+        cleanup_shutdown.clone(),
+    );
     let state = AppState::new(
         config,
         pool.clone(),
@@ -101,6 +109,7 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
         } => tracing::warn!("connections still open after the drain timeout"),
     }
 
+    cleanup_shutdown.cancel();
     pool.close().await;
     Ok(())
 }

@@ -123,6 +123,7 @@ pub struct Settings {
     pub http_mode: HttpModeSettings,
     pub network: NetworkSettings,
     pub rate_limits: RateLimitSettings,
+    pub audit: AuditSettings,
     pub sessions: SessionSettings,
     pub oauth: OAuthSettings,
     pub password_kdf: PasswordKdfSettings,
@@ -279,6 +280,18 @@ impl Cidr {
             }
             _ => false,
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuditSettings {
+    pub retention_days: u32,
+}
+
+impl Default for AuditSettings {
+    fn default() -> Self {
+        Self { retention_days: 90 }
     }
 }
 

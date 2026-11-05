@@ -63,3 +63,6 @@ web_session_ttl_secs = 2_592_000
 memory_kib  = 65536
 iterations  = 3
 parallelism = 1
+
+[audit]
+retention_days = 90

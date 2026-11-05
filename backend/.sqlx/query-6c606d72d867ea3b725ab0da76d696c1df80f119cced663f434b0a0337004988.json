@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM invites WHERE used_at IS NULL AND expires_at < now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "6c606d72d867ea3b725ab0da76d696c1df80f119cced663f434b0a0337004988"
+}
