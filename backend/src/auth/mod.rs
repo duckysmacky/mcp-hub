@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 use crate::{
     app_state::AppState,
     audit,
-    crypto::{self, Dek, KdfParams, Token, WrapKind},
+    crypto::{self, Dek, KdfParams, Kek, Token, WrapKind},
     db,
     error::ApiError,
 };
@@ -31,6 +31,7 @@ pub fn routes() -> Router<AppState> {
         .route("/signup", post(signup))
         .route("/login", post(login))
         .route("/logout", post(logout))
+        .route("/password", post(change_password))
         .route("/me", get(me))
 }
 
@@ -125,12 +126,16 @@ fn validate_new_credentials(credentials: &Credentials) -> Result<(), ApiError> {
             "username must be 1-{MAX_USERNAME_CHARS} letters, digits, or - _ ."
         )));
     }
-    if credentials.password.chars().count() < MIN_PASSWORD_CHARS {
+    validate_new_password(&credentials.password)
+}
+
+fn validate_new_password(password: &str) -> Result<(), ApiError> {
+    if password.chars().count() < MIN_PASSWORD_CHARS {
         return Err(ApiError::BadRequest(format!(
             "password must be at least {MIN_PASSWORD_CHARS} characters"
         )));
     }
-    if credentials.password.len() > MAX_PASSWORD_BYTES {
+    if password.len() > MAX_PASSWORD_BYTES {
         return Err(ApiError::BadRequest("password is too long".to_owned()));
     }
     Ok(())
@@ -147,16 +152,8 @@ async fn signup(
 
     let params = state.config.settings.password_kdf.params();
     let kek_salt = crypto::generate_salt();
-    let (password_hash, kek) = {
-        let (password, salt) = (credentials.password, kek_salt.clone());
-        spawn_blocking(move || {
-            Ok::<_, crypto::CryptoError>((
-                crypto::hash_password(&password, params)?,
-                crypto::derive_password_kek(&password, &salt, params)?,
-            ))
-        })
-        .await??
-    };
+    let (password_hash, kek) =
+        hash_new_password(credentials.password, kek_salt.clone(), params).await?;
 
     let dek = Dek::generate();
     let id = db::users::create(
@@ -232,6 +229,22 @@ async fn login(
     Ok(([(header::SET_COOKIE, cookie)], Json(body)))
 }
 
+/// The verification hash and the KEK of a new password.
+async fn hash_new_password(
+    password: Zeroizing<String>,
+    salt: Vec<u8>,
+    params: KdfParams,
+) -> Result<(String, Kek), ApiError> {
+    let hashed = spawn_blocking(move || {
+        Ok::<_, crypto::CryptoError>((
+            crypto::hash_password(&password, params)?,
+            crypto::derive_password_kek(&password, &salt, params)?,
+        ))
+    })
+    .await??;
+    Ok(hashed)
+}
+
 async fn unwrap_with_password(
     password: Zeroizing<String>,
     password_hash: String,
@@ -254,6 +267,63 @@ async fn unwrap_with_password(
         )?)
     })
     .await?
+}
+
+#[derive(Deserialize)]
+struct ChangePassword {
+    current_password: Zeroizing<String>,
+    new_password: Zeroizing<String>,
+}
+
+/// Re-wraps the DEK under the new password. Nothing else that wraps it has to change.
+async fn change_password(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Json(request): Json<ChangePassword>,
+) -> Result<StatusCode, ApiError> {
+    // Not 401: the session is fine, and clients treat 401 as being logged out.
+    let wrong_password = || ApiError::BadRequest("the current password is wrong".to_owned());
+    validate_new_password(&request.new_password)?;
+    if request.current_password.len() > MAX_PASSWORD_BYTES {
+        return Err(wrong_password());
+    }
+    let user = db::users::find_by_id(&state.pool, session.user_id)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
+    let dek = match unwrap_with_password(
+        request.current_password,
+        user.password_hash,
+        user.kek_salt,
+        user.kek_params.0,
+        user.wrapped_dek,
+        user.id,
+    )
+    .await
+    {
+        Ok(dek) => dek,
+        Err(ApiError::InvalidCredentials) => return Err(wrong_password()),
+        Err(error) => return Err(error),
+    };
+
+    let params = state.config.settings.password_kdf.params();
+    let kek_salt = crypto::generate_salt();
+    let (password_hash, kek) =
+        hash_new_password(request.new_password, kek_salt.clone(), params).await?;
+    let wrapped_dek = crypto::wrap_dek(&kek, &dek, WrapKind::Password, user.id, user.id)?;
+    db::users::change_password(
+        &state.pool,
+        user.id,
+        session.id,
+        db::users::NewPassword {
+            password_hash: &password_hash,
+            kek_salt: &kek_salt,
+            kek_params: params,
+            wrapped_dek: &wrapped_dek,
+        },
+    )
+    .await?;
+    audit::record(&state.pool, Some(user.id), None, "password_changed", None).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn session_cookie_header(state: &AppState, value: &str, max_age_secs: u64) -> String {

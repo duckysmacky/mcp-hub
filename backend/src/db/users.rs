@@ -52,6 +52,55 @@ pub async fn create(
     Ok(id)
 }
 
+pub async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<UserCredentials>, sqlx::Error> {
+    sqlx::query_as!(
+        UserCredentials,
+        r#"SELECT id, username, password_hash, kek_salt,
+                  kek_params AS "kek_params: Json<KdfParams>", wrapped_dek
+           FROM users WHERE id = $1"#,
+        id,
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub struct NewPassword<'a> {
+    pub password_hash: &'a str,
+    pub kek_salt: &'a [u8],
+    pub kek_params: KdfParams,
+    pub wrapped_dek: &'a [u8],
+}
+
+/// Stores a new password and logs out every web session except the one making the
+/// change. OAuth grants keep working, because the DEK they wrap hasn't changed.
+pub async fn change_password(
+    pool: &PgPool,
+    user_id: i64,
+    keep_session_id: i64,
+    password: NewPassword<'_>,
+) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query!(
+        "UPDATE users SET password_hash = $2, kek_salt = $3, kek_params = $4, wrapped_dek = $5
+         WHERE id = $1",
+        user_id,
+        password.password_hash,
+        password.kek_salt,
+        Json(password.kek_params) as _,
+        password.wrapped_dek,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM web_sessions WHERE user_id = $1 AND id <> $2",
+        user_id,
+        keep_session_id,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await
+}
+
 pub async fn find_by_username(
     pool: &PgPool,
     username: &str,

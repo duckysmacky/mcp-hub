@@ -229,3 +229,98 @@ async fn expired_session_is_rejected(pool: PgPool) {
     let me = app.get("/api/auth/me", Some(&cookie)).await;
     assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
 }
+
+async fn change_password(app: &TestApp, cookie: &str, current: &str, new: &str) -> StatusCode {
+    app.post(
+        "/api/auth/password",
+        Some(cookie),
+        json!({ "current_password": current, "new_password": new }),
+    )
+    .await
+    .status()
+}
+
+#[sqlx::test]
+async fn changing_the_password_logs_out_other_sessions(pool: PgPool) {
+    let app = TestApp::spawn(pool, Settings::default(), "", true).await;
+    app.signup("alice", "old password here").await;
+    let current = app.login("alice", "old password here").await;
+    let other = app.login("alice", "old password here").await;
+
+    assert_eq!(
+        change_password(&app, &current, "not the password", "new password here").await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        change_password(&app, &current, "old password here", "short").await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        app.get("/api/auth/me", Some(&other)).await.status(),
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        change_password(&app, &current, "old password here", "new password here").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        app.get("/api/auth/me", Some(&current)).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.get("/api/auth/me", Some(&other)).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let old = json!({ "username": "alice", "password": "old password here" });
+    assert_eq!(
+        app.post("/api/auth/login", None, old).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    app.login("alice", "new password here").await;
+}
+
+#[sqlx::test]
+async fn changing_the_password_requires_a_login(pool: PgPool) {
+    let app = TestApp::spawn(pool, Settings::default(), "", true).await;
+    let body = json!({ "current_password": "a", "new_password": "new password here" });
+    let response = app.post("/api/auth/password", None, body).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn secrets_and_grants_survive_a_password_change(pool: PgPool) {
+    let catalog = r#"
+        [[server]]
+        id = "demo"
+        mode = "stdio"
+        runtime = "bun"
+        package = "demo@1.0.0"
+
+        [[server.env]]
+        name = "TOKEN"
+    "#;
+    let app = common::McpApp::spawn(pool, catalog, |_| {}).await;
+    let (cookie, _) = app
+        .user_with_instance("alice", "demo", "demo", &[("TOKEN", "stored-value")])
+        .await;
+    let tokens = common::connect(&app, &cookie, "demo").await;
+
+    assert_eq!(
+        change_password(&app, &cookie, "correct horse battery", "new password here").await,
+        StatusCode::NO_CONTENT
+    );
+
+    // The old token still unwraps the DEK, and the value it decrypts is intact.
+    let (session, _) = app.initialize("demo", &tokens.access_token).await;
+    let response = app
+        .call_tool("demo", &tokens.access_token, &session, "env", json!({}))
+        .await;
+    let message = common::read_json_rpc(response).await;
+    assert!(common::tool_text(&message).contains("stored-value"));
+
+    // So does the password wrap: a new login can issue tokens that still decrypt it.
+    let new_cookie = app.login("alice", "new password here").await;
+    let reconnected = common::connect(&app, &new_cookie, "demo").await;
+    app.initialize("demo", &reconnected.access_token).await;
+}
