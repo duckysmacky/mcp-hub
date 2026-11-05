@@ -31,7 +31,7 @@
 			await api.post('/auth/logout');
 		} finally {
 			await invalidateAll();
-			await goto(resolve('/login'));
+			await goto(resolve('/(card)/login'));
 		}
 	}
 </script>
@@ -42,7 +42,7 @@
 		<nav class="cb-nav-links" aria-label="Primary">
 			<a
 				class="cb-nav-link"
-				href={resolve('/instances')}
+				href={resolve('/(app)/instances')}
 				aria-current={inInstances ? 'page' : undefined}
 			>
 				Instances

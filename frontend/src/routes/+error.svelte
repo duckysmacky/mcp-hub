@@ -20,7 +20,10 @@
 			<h1 class="cb-card-title">{message}</h1>
 		</div>
 		<div class="cb-card-body">
-			<a class="cb-btn cb-btn--secondary cb-btn--lg cb-btn--block" href={resolve('/instances')}>
+			<a
+				class="cb-btn cb-btn--secondary cb-btn--lg cb-btn--block"
+				href={resolve('/(app)/instances')}
+			>
 				Go to instances
 			</a>
 		</div>
