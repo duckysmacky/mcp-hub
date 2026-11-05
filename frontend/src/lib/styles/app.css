@@ -19,3 +19,14 @@ body {
 .account-menu .cb-btn {
 	justify-content: flex-start;
 }
+
+/* Cobalt's dialog as a native <dialog>: the browser's backdrop replaces the scrim element. */
+dialog.cb-dialog {
+	width: calc(100% - 2 * var(--space-4));
+	margin: auto;
+	padding: 0;
+	color: var(--text);
+}
+dialog.cb-dialog::backdrop {
+	background: var(--scrim);
+}
