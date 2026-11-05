@@ -129,6 +129,7 @@ mod tests {
         NetworkSettings {
             self_addresses: vec!["203.0.113.10".parse().unwrap()],
             allow_http_urls: false,
+            ..NetworkSettings::default()
         }
     }
 

@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     path::PathBuf,
     process::Command,
     sync::{
@@ -50,13 +51,13 @@ pub fn state(pool: PgPool) -> AppState {
 }
 
 pub fn state_with(pool: PgPool, config: Arc<Config>, catalog: &str) -> AppState {
-    AppState {
-        supervisor: Supervisor::new(config.clone()),
-        config,
+    AppState::new(
+        config.clone(),
         pool,
-        catalog: Arc::new(Catalog::parse(catalog).unwrap()),
-        bin_scripts: Arc::new(HashMap::new()),
-    }
+        Catalog::parse(catalog).unwrap(),
+        HashMap::new(),
+        Supervisor::new(config),
+    )
 }
 
 /// The real router on a real port, with helpers for the JSON API.
@@ -91,7 +92,8 @@ impl TestApp {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let router = build_router(state.clone());
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let service = router.into_make_service_with_connect_info::<SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
         Self {
             address,
             state,

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -23,6 +23,8 @@ pub enum ApiError {
     NotFound,
     #[error("{0}")]
     Conflict(String),
+    #[error("too many attempts; try again later")]
+    RateLimited { retry_after_secs: u64 },
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("crypto error: {0}")]
@@ -39,6 +41,11 @@ impl IntoResponse for ApiError {
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::RateLimited { retry_after_secs } => {
+                let headers = [(header::RETRY_AFTER, retry_after_secs.to_string())];
+                let body = Json(json!({ "error": self.to_string() }));
+                return (StatusCode::TOO_MANY_REQUESTS, headers, body).into_response();
+            }
             Self::Database(_) | Self::Crypto(_) | Self::Task(_) => {
                 tracing::error!(error = %self, "request failed");
                 let body = Json(json!({ "error": "internal error" }));

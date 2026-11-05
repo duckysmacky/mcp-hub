@@ -16,7 +16,7 @@ use crate::{app_state::AppState, auth, oauth};
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .nest("/auth", auth::routes())
+        .nest("/auth", auth::routes(&state))
         .merge(instances::routes())
         .merge(grants::routes())
         .merge(oauth::consent::routes())

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use mcp_hub::{
@@ -74,15 +74,19 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     let supervisor = Supervisor::new(config.clone());
     supervisor.spawn_reaper();
     supervisor.spawn_stop_listener(pool.clone());
-    let state = AppState {
+    let state = AppState::new(
         config,
-        pool: pool.clone(),
-        catalog: Arc::new(catalog),
-        bin_scripts: Arc::new(bin_scripts),
-        supervisor: supervisor.clone(),
-    };
+        pool.clone(),
+        catalog,
+        bin_scripts,
+        supervisor.clone(),
+    );
     let (drain_started, drain_signal) = tokio::sync::oneshot::channel::<()>();
-    let server = axum::serve(listener, build_router(state)).with_graceful_shutdown(async move {
+    let server = axum::serve(
+        listener,
+        build_router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
         shutdown_signal().await;
         // Killing the children first also ends open SSE streams, so connections can drain.
         supervisor.shutdown().await;

@@ -68,6 +68,15 @@ pub async fn create(
     .map_err(|error| conflict_on_duplicate(error, SLUG_TAKEN))
 }
 
+pub async fn count(pool: &PgPool, user_id: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!" FROM instances WHERE user_id = $1"#,
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,

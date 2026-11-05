@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use common::{TestApp, config};
 use mcp_hub::{
@@ -21,13 +21,13 @@ async fn invite_only_app(pool: PgPool) -> TestApp {
     let mut base = config(Settings::default());
     let settings = &mut Arc::get_mut(&mut base).unwrap().settings;
     settings.server.signup = SignupMode::InviteOnly;
-    TestApp::serve(AppState {
-        supervisor: Supervisor::new(base.clone()),
-        config: base,
+    TestApp::serve(AppState::new(
+        base.clone(),
         pool,
-        catalog: Arc::new(Catalog::parse("").unwrap()),
-        bin_scripts: Arc::default(),
-    })
+        Catalog::parse("").unwrap(),
+        HashMap::new(),
+        Supervisor::new(base),
+    ))
     .await
 }
 

@@ -122,6 +122,7 @@ pub struct Settings {
     pub limits: LimitSettings,
     pub http_mode: HttpModeSettings,
     pub network: NetworkSettings,
+    pub rate_limits: RateLimitSettings,
     pub sessions: SessionSettings,
     pub oauth: OAuthSettings,
     pub password_kdf: PasswordKdfSettings,
@@ -224,6 +225,91 @@ pub struct NetworkSettings {
     /// The host's public IPs: `net_guard` allows them only on ports 443 and 80.
     pub self_addresses: Vec<IpAddr>,
     pub allow_http_urls: bool,
+    /// Peers whose `X-Forwarded-For` is believed. Everyone else's is ignored.
+    pub trusted_proxies: Vec<Cidr>,
+}
+
+/// An address range such as `172.16.0.0/12`. A bare address is a range of one.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "String")]
+pub struct Cidr {
+    network: IpAddr,
+    prefix_bits: u8,
+}
+
+impl TryFrom<String> for Cidr {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let invalid = || format!("{text} is not an address range like 172.16.0.0/12");
+        let (address, prefix) = match text.split_once('/') {
+            Some((address, prefix)) => (address, Some(prefix)),
+            None => (text.as_str(), None),
+        };
+        let network: IpAddr = address.parse().map_err(|_| invalid())?;
+        let max_bits = if network.is_ipv4() { 32 } else { 128 };
+        let prefix_bits = match prefix {
+            Some(prefix) => prefix.parse().map_err(|_| invalid())?,
+            None => max_bits,
+        };
+        if prefix_bits > max_bits {
+            return Err(invalid());
+        }
+        Ok(Self {
+            network,
+            prefix_bits,
+        })
+    }
+}
+
+impl Cidr {
+    pub fn contains(&self, address: IpAddr) -> bool {
+        match (self.network, address.to_canonical()) {
+            (IpAddr::V4(network), IpAddr::V4(address)) => {
+                let mask = u32::MAX
+                    .checked_shl(32 - u32::from(self.prefix_bits))
+                    .unwrap_or(0);
+                u32::from(network) & mask == u32::from(address) & mask
+            }
+            (IpAddr::V6(network), IpAddr::V6(address)) => {
+                let mask = u128::MAX
+                    .checked_shl(128 - u32::from(self.prefix_bits))
+                    .unwrap_or(0);
+                u128::from(network) & mask == u128::from(address) & mask
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Requests per client address per minute, except where a key says otherwise.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateLimitSettings {
+    pub login: u32,
+    /// Across all addresses, against guessing one account's password from many.
+    pub login_per_username: u32,
+    pub signup: u32,
+    pub password_change: u32,
+    pub oauth_register: u32,
+    pub oauth_authorize: u32,
+    pub oauth_token: u32,
+    pub oauth_revoke: u32,
+}
+
+impl Default for RateLimitSettings {
+    fn default() -> Self {
+        Self {
+            login: 10,
+            login_per_username: 10,
+            signup: 5,
+            password_change: 5,
+            oauth_register: 10,
+            oauth_authorize: 30,
+            oauth_token: 60,
+            oauth_revoke: 60,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,6 +361,9 @@ pub struct LimitSettings {
     pub max_processes_total: usize,
     pub max_spawns_per_user_per_minute: usize,
     pub max_pending_requests_per_session: usize,
+    pub max_instances_per_user: i64,
+    /// Each password hash takes `password_kdf.memory_kib`, so this bounds memory under a flood.
+    pub max_concurrent_password_hashes: usize,
     pub idle_timeout_secs: u64,
     pub initialize_timeout_secs: u64,
     pub request_timeout_secs: u64,
@@ -292,6 +381,8 @@ impl Default for LimitSettings {
             max_processes_total: 50,
             max_spawns_per_user_per_minute: 10,
             max_pending_requests_per_session: 32,
+            max_instances_per_user: 20,
+            max_concurrent_password_hashes: 4,
             idle_timeout_secs: 600,
             initialize_timeout_secs: 30,
             request_timeout_secs: 300,
@@ -347,6 +438,28 @@ mod tests {
             "ftp://localhost",
         ] {
             assert!(invalid.parse::<PublicUrl>().is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn address_ranges_match_what_they_should() {
+        let cidr = |text: &str| Cidr::try_from(text.to_owned()).unwrap();
+        let address = |text: &str| text.parse::<IpAddr>().unwrap();
+
+        assert!(cidr("172.16.0.0/12").contains(address("172.31.255.1")));
+        assert!(!cidr("172.16.0.0/12").contains(address("172.32.0.1")));
+        assert!(cidr("10.0.0.1").contains(address("10.0.0.1")));
+        assert!(!cidr("10.0.0.1").contains(address("10.0.0.2")));
+        assert!(cidr("0.0.0.0/0").contains(address("8.8.8.8")));
+        assert!(cidr("fd00::/8").contains(address("fd12::1")));
+        assert!(!cidr("fd00::/8").contains(address("fe80::1")));
+        assert!(cidr("::/0").contains(address("2001:db8::1")));
+        // A v4 peer on a dual-stack socket arrives as a mapped v6 address.
+        assert!(cidr("10.0.0.0/8").contains(address("::ffff:10.1.2.3")));
+        assert!(!cidr("10.0.0.0/8").contains(address("2001:db8::1")));
+
+        for invalid in ["", "nonsense", "10.0.0.0/33", "fd00::/129", "10.0.0.0/x"] {
+            assert!(Cidr::try_from(invalid.to_owned()).is_err(), "{invalid}");
         }
     }
 

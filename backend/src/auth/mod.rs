@@ -26,13 +26,24 @@ const MIN_PASSWORD_CHARS: usize = 8;
 // Bounds the work Argon2 does on attacker-supplied input.
 const MAX_PASSWORD_BYTES: usize = 1024;
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: &AppState) -> Router<AppState> {
+    let limits = &state.config.settings.rate_limits;
     Router::new()
         .route("/config", get(config))
-        .route("/signup", post(signup))
-        .route("/login", post(login))
+        .route(
+            "/signup",
+            state.limited("signup", limits.signup, post(signup)),
+        )
+        .route("/login", state.limited("login", limits.login, post(login)))
         .route("/logout", post(logout))
-        .route("/password", post(change_password))
+        .route(
+            "/password",
+            state.limited(
+                "password_change",
+                limits.password_change,
+                post(change_password),
+            ),
+        )
         .route("/me", get(me))
 }
 
@@ -179,8 +190,10 @@ async fn signup(
 
     let params = state.config.settings.password_kdf.params();
     let kek_salt = crypto::generate_salt();
+    let hash_slot = state.password_hash_slot().await;
     let (password_hash, kek) =
         hash_new_password(credentials.password, kek_salt.clone(), params).await?;
+    drop(hash_slot);
 
     let dek = Dek::generate();
     let id = db::users::create(
@@ -211,6 +224,12 @@ async fn login(
     if credentials.password.len() > MAX_PASSWORD_BYTES {
         return Err(ApiError::InvalidCredentials);
     }
+    state.rate_limiter.check(
+        "login_username",
+        &credentials.username.to_lowercase(),
+        state.config.settings.rate_limits.login_per_username,
+    )?;
+    let _hash_slot = state.password_hash_slot().await;
     let Some(user) = db::users::find_by_username(&state.pool, &credentials.username).await? else {
         // Spend the same time as a real check, so usernames can't be probed by timing.
         let params = state.config.settings.password_kdf.params();
@@ -323,6 +342,7 @@ async fn change_password(
     let user = db::users::find_by_id(&state.pool, session.user_id)
         .await?
         .ok_or(ApiError::Unauthorized)?;
+    let _hash_slot = state.password_hash_slot().await;
     let dek = match unwrap_with_password(
         request.current_password,
         user.password_hash,

@@ -13,6 +13,7 @@ pub mod mcp;
 pub mod net_guard;
 pub mod oauth;
 pub mod process;
+pub mod rate_limit;
 pub mod supervisor;
 pub mod web;
 
@@ -32,7 +33,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .nest("/api", api::routes(state.clone()))
-        .merge(oauth::routes())
+        .merge(oauth::routes(&state))
         .merge(mcp::routes())
         .merge(web::routes(&state.config.settings.paths.r#static))
         .layer(DefaultBodyLimit::max(max_body_bytes))

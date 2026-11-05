@@ -253,6 +253,13 @@ async fn create_instance(
     {
         return Err(ApiError::BadRequest("unknown server".to_owned()));
     }
+    // ponytail: two concurrent creates can pass this together. It bounds abuse, not exactly.
+    let max_instances = state.config.settings.limits.max_instances_per_user;
+    if db::instances::count(&state.pool, session.user_id).await? >= max_instances {
+        return Err(ApiError::Conflict(format!(
+            "you can have at most {max_instances} instances"
+        )));
+    }
     let instance = db::instances::create(
         &state.pool,
         session.user_id,

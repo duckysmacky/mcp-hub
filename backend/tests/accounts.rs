@@ -99,7 +99,9 @@ async fn signup_respects_the_toggle(pool: PgPool) {
 
 #[sqlx::test]
 async fn signup_validates_input_and_usernames_are_case_insensitive(pool: PgPool) {
-    let app = app(pool).await;
+    let mut settings = Settings::default();
+    settings.rate_limits.signup = 100;
+    let app = TestApp::spawn(pool, settings, "", true).await;
 
     assert_eq!(
         app.signup("bad name", PASSWORD).await.status(),

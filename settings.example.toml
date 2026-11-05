@@ -22,6 +22,8 @@ max_sessions_per_instance        = 3
 max_processes_total              = 50
 max_spawns_per_user_per_minute   = 10
 max_pending_requests_per_session = 32
+max_instances_per_user           = 20
+max_concurrent_password_hashes   = 4    # each takes password_kdf.memory_kib
 idle_timeout_secs                = 600
 initialize_timeout_secs          = 30
 request_timeout_secs             = 300
@@ -36,6 +38,18 @@ port_range = [41000, 41999]
 [network]
 self_addresses  = []       # the host's public IPs (net_guard: allowed only on 443/80)
 allow_http_urls = false
+trusted_proxies = []       # where X-Forwarded-For is believed, like "172.16.0.0/12"
+
+# Requests per client address per minute.
+[rate_limits]
+login              = 10
+login_per_username = 10    # across all addresses
+signup             = 5
+password_change    = 5
+oauth_register     = 10
+oauth_authorize    = 30
+oauth_token        = 60
+oauth_revoke       = 60
 
 [oauth]
 access_token_ttl_secs  = 3600

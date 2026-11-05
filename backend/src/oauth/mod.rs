@@ -20,7 +20,8 @@ use crate::{app_state::AppState, config::PublicUrl, db::instances::is_valid_slug
 pub const SCOPE: &str = "mcp";
 
 /// The routes outside `/api`. These use no cookies, so they need no CSRF checks.
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: &AppState) -> Router<AppState> {
+    let limits = &state.config.settings.rate_limits;
     Router::new()
         .route(
             "/.well-known/oauth-authorization-server",
@@ -30,10 +31,30 @@ pub fn routes() -> Router<AppState> {
             "/.well-known/oauth-protected-resource/mcp/{slug}",
             get(protected_resource_metadata),
         )
-        .route("/oauth/register", post(register::register))
-        .route("/oauth/authorize", get(authorize::authorize))
-        .route("/oauth/token", post(token::token))
-        .route("/oauth/revoke", post(revoke::revoke))
+        .route(
+            "/oauth/register",
+            state.limited(
+                "oauth_register",
+                limits.oauth_register,
+                post(register::register),
+            ),
+        )
+        .route(
+            "/oauth/authorize",
+            state.limited(
+                "oauth_authorize",
+                limits.oauth_authorize,
+                get(authorize::authorize),
+            ),
+        )
+        .route(
+            "/oauth/token",
+            state.limited("oauth_token", limits.oauth_token, post(token::token)),
+        )
+        .route(
+            "/oauth/revoke",
+            state.limited("oauth_revoke", limits.oauth_revoke, post(revoke::revoke)),
+        )
 }
 
 /// The canonical resource URL of a slug.
