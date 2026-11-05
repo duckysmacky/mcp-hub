@@ -14,8 +14,8 @@ export function failedExit(status: Pick<InstanceStatus, 'last_exit'>): string | 
 	return exit && !CLEAN_EXITS.includes(exit) ? exit : null;
 }
 
-export function statusLabel(status: InstanceStatus): StatusLabel {
-	if (status.needs_attention) {
+export function statusLabel(status: InstanceStatus, missingRequired: string[]): StatusLabel {
+	if (status.needs_attention || missingRequired.length > 0) {
 		return { word: 'NEEDS ATTENTION', tone: 'warn' };
 	}
 	if (!status.enabled) {

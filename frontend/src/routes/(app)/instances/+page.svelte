@@ -37,12 +37,17 @@
 		<div class="cb-rows">
 			{#each data.rows as { instance, status } (instance.id)}
 				<a
-					class={['cb-row cb-row--link', status.needs_attention && 'cb-row--warn']}
+					class={[
+						'cb-row cb-row--link',
+						statusLabel(status, instance.missing_required).tone === 'warn' && 'cb-row--warn'
+					]}
 					href={resolve('/(app)/instances/[id]', { id: String(instance.id) })}
 				>
 					<strong class="slug">{instance.slug}</strong>
 					<span class="server">{instance.server_id}</span>
-					<span class="state"><StatusBadge status={statusLabel(status)} /></span>
+					<span class="state"
+						><StatusBadge status={statusLabel(status, instance.missing_required)} /></span
+					>
 				</a>
 			{/each}
 		</div>

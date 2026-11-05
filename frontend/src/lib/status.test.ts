@@ -12,7 +12,8 @@ const base: InstanceStatus = {
 	output_tail: ''
 };
 
-const wordFor = (change: Partial<InstanceStatus>) => statusLabel({ ...base, ...change }).word;
+const wordFor = (change: Partial<InstanceStatus>, missing: string[] = []) =>
+	statusLabel({ ...base, ...change }, missing).word;
 
 test('an instance waiting for its first connection is idle', () => {
 	expect(wordFor({})).toBe('IDLE');
@@ -35,4 +36,8 @@ test('stopping is a choice, not an error', () => {
 
 test('needing attention wins over everything', () => {
 	expect(wordFor({ enabled: false, needs_attention: 'server_removed' })).toBe('NEEDS ATTENTION');
+});
+
+test('missing required values need attention, even while stopped', () => {
+	expect(wordFor({ enabled: false }, ['TAIGA_TOKEN'])).toBe('NEEDS ATTENTION');
 });

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api, messageOf } from '#lib/api/client.ts';
-	import { RUNTIMES, type InstanceStatus, type Runtime } from '#lib/api/types.ts';
+	import type { InstanceStatus } from '#lib/api/types.ts';
 	import Banner from '#lib/components/Banner.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import ClientGuides from '#lib/components/ClientGuides.svelte';
@@ -8,9 +8,9 @@
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import EnvVars from '#lib/components/EnvVars.svelte';
 	import LogPanel from '#lib/components/LogPanel.svelte';
-	import SegmentedControl from '#lib/components/SegmentedControl.svelte';
 	import SlugField from '#lib/components/SlugField.svelte';
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { failedExit, statusLabel } from '#lib/status.ts';
 	import { toasts } from '#lib/toasts.svelte.ts';
 	import { goto, invalidateAll } from '$app/navigation';
@@ -19,7 +19,9 @@
 
 	const STATUS_POLL_MS = 5000;
 
+	type Action = 'start' | 'stop' | 'restart' | 'delete' | 'rename';
 	type Confirmation = {
+		name: Action;
 		title: string;
 		detail: string;
 		action: string;
@@ -29,24 +31,23 @@
 
 	let { data }: PageProps = $props();
 
+	const t = $derived(i18n.t.instance);
 	const instance = $derived(data.instance);
 	const server = $derived(data.servers.find((candidate) => candidate.id === instance.server_id));
 	const path = $derived(`/instances/${instance.id}`);
 
 	let status = $derived<InstanceStatus>(data.status);
-	const label = $derived(statusLabel(status));
+	const label = $derived(statusLabel(status, instance.missing_required));
 	const lastFailure = $derived(failedExit(status));
-	const isServerRemoved = $derived(instance.needs_attention === 'server_removed');
+	const cannotStart = $derived(
+		instance.needs_attention === 'server_removed' || instance.needs_attention === 'server_disabled'
+	);
 
-	// Unsaved edits follow data.status, not the polled status, so polling can't overwrite them.
-	const savedRuntime = $derived(data.status.runtime);
 	let slug = $derived(instance.slug);
-	let runtime = $derived<Runtime>(savedRuntime ?? 'bun');
-	const hasSettingChanges = $derived(slug !== instance.slug || runtime !== savedRuntime);
 	let settingsError = $state('');
 
 	let confirmation = $state.raw<Confirmation | null>(null);
-	let pendingAction = $state<string | null>(null);
+	let pendingAction = $state<Action | null>(null);
 
 	// Polls while this page is open and visible. Background tabs stay quiet.
 	$effect(() => {
@@ -64,7 +65,7 @@
 		return () => clearInterval(timer);
 	});
 
-	async function act(name: string, action: () => Promise<void>) {
+	async function act(name: Action, action: () => Promise<void>) {
 		confirmation = null;
 		pendingAction = name;
 		try {
@@ -77,76 +78,67 @@
 		}
 	}
 
-	const liveNote = $derived.by(() => {
-		const count = status.live_processes;
-		if (count === 0) {
-			return '';
-		}
-		return count === 1 ? '1 live process will end. ' : `${count} live processes will end. `;
-	});
+	const liveNote = $derived(status.live_processes > 0 ? t.liveNote(status.live_processes) : '');
 
 	const start = () => act('start', () => api.post(`${path}/start`));
 
 	function askToStop() {
 		confirmation = {
-			title: 'Stop instance?',
-			detail: `${liveNote}Connected apps lose access until you start it again.`,
-			action: 'Stop instance',
+			name: 'stop',
+			title: t.stopTitle,
+			detail: `${liveNote}${t.stopDetail}`,
+			action: t.stopAction,
 			run: () => api.post(`${path}/stop`)
 		};
 	}
 
 	function askToRestart() {
 		confirmation = {
-			title: 'Restart instance?',
-			detail: `${liveNote}Connected apps reconnect by themselves, and work in progress is cancelled.`,
-			action: 'Restart instance',
+			name: 'restart',
+			title: t.restartTitle,
+			detail: `${liveNote}${t.restartDetail}`,
+			action: t.restartAction,
 			variant: 'secondary',
 			run: async () => {
 				await api.post(`${path}/restart`);
-				toasts.show('ok', `${instance.slug} restarted`);
+				toasts.show('ok', t.restarted(instance.slug));
 			}
 		};
 	}
 
 	function askToDelete() {
 		confirmation = {
-			title: 'Delete instance?',
-			detail: 'Its saved values are deleted and every app using it is disconnected.',
-			action: 'Delete instance',
+			name: 'delete',
+			title: t.deleteTitle,
+			detail: t.deleteDetail,
+			action: t.deleteHeading,
 			run: async () => {
 				await api.delete(path);
-				toasts.show('ok', `${instance.slug} deleted`);
+				toasts.show('ok', t.deleted(instance.slug));
 				await goto(resolve('/(app)/instances'));
 			}
 		};
 	}
 
-	async function saveSettings() {
+	async function rename() {
 		settingsError = '';
-		const changes = {
-			slug: slug === instance.slug ? undefined : slug,
-			runtime: runtime === savedRuntime ? undefined : runtime
-		};
 		try {
-			await api.patch(path, changes);
-			toasts.show('ok', 'Settings saved');
+			await api.patch(path, { slug });
+			toasts.show('ok', t.settingsSaved);
 		} catch (failure) {
 			settingsError = messageOf(failure);
 		}
 	}
 
-	function askToSaveSettings(event: SubmitEvent) {
+	function askToRename(event: SubmitEvent) {
 		event.preventDefault();
-		const isRename = slug !== instance.slug;
 		confirmation = {
-			title: isRename ? `Rename to ${slug}?` : `Switch to ${runtime}?`,
-			detail: isRename
-				? `${liveNote}The connection URL changes, so every connected app has to be added again.`
-				: `${liveNote}Connected apps reconnect by themselves.`,
-			action: 'Save settings',
+			name: 'rename',
+			title: t.renameTitle(slug),
+			detail: t.renameDetail,
+			action: t.rename,
 			variant: 'secondary',
-			run: saveSettings
+			run: rename
 		};
 	}
 </script>
@@ -156,49 +148,66 @@
 </svelte:head>
 
 <div class="cb-crumbs">
-	<a href={resolve('/(app)/instances')}>instances</a> /
+	<a href={resolve('/(app)/instances')}>{i18n.t.instances.crumb}</a> /
 	<span class="crumb-here">{instance.slug}</span>
 </div>
 
 <div class="cb-page-head">
 	<div>
-		<span class="cb-label">Instance</span>
+		<span class="cb-label">{t.label}</span>
 		<h1 class="cb-page-title">{instance.slug}</h1>
 		<div class="cb-meta">
-			<span>catalog: {instance.server_id}</span>
+			<span>{t.metaCatalog(instance.server_id)}</span>
 			{#if status.mode}
 				<span class="cb-meta-sep">|</span>
-				<span>mode: {status.mode}</span>
+				<span>{t.metaMode(status.mode)}</span>
 			{/if}
 			{#if status.runtime}
 				<span class="cb-meta-sep">|</span>
-				<span>runtime: {status.runtime}</span>
+				<span>{t.metaRuntime(status.runtime)}</span>
 			{/if}
 		</div>
 	</div>
 	<div class="cb-actions">
 		<StatusBadge status={label} />
-		{#if !isServerRemoved}
+		{#if !cannotStart}
 			{#if status.enabled}
-				<Button busy={pendingAction === 'Restart instance'} onclick={askToRestart}>
-					{pendingAction === 'Restart instance' ? 'Restarting' : 'Restart'}
+				<Button busy={pendingAction === 'restart'} onclick={askToRestart}>
+					{pendingAction === 'restart' ? t.restarting : t.restart}
 				</Button>
-				<Button variant="danger" busy={pendingAction === 'Stop instance'} onclick={askToStop}>
-					{pendingAction === 'Stop instance' ? 'Stopping' : 'Stop'}
+				<Button variant="danger" busy={pendingAction === 'stop'} onclick={askToStop}>
+					{pendingAction === 'stop' ? t.stopping : t.stop}
 				</Button>
 			{:else}
 				<Button busy={pendingAction === 'start'} onclick={start}>
-					{pendingAction === 'start' ? 'Starting' : 'Start'}
+					{pendingAction === 'start' ? t.starting : t.start}
 				</Button>
 			{/if}
 		{/if}
 	</div>
 </div>
 
-{#if isServerRemoved}
-	<Banner tone="warn" tag="Needs attention">
-		<strong>This server was removed from the catalog.</strong> It can't start until the operator adds
-		it back. You can still delete this instance.
+{#if instance.needs_attention === 'server_removed'}
+	<Banner tone="warn" tag={t.needsAttention}>
+		<strong>{t.serverRemovedLead}</strong>
+		{t.serverRemovedBody}
+	</Banner>
+{:else if instance.needs_attention === 'server_disabled'}
+	<Banner tone="warn" tag={t.needsAttention}>
+		<strong>{t.serverDisabledLead}</strong>
+		{t.serverDisabledBody}
+	</Banner>
+{:else if instance.needs_attention === 'secrets_reset'}
+	<Banner tone="warn" tag={t.needsAttention}>
+		<strong>{t.secretsResetLead}</strong>
+		{t.secretsResetBody}
+	</Banner>
+{/if}
+
+{#if instance.missing_required.length > 0 && !cannotStart}
+	<Banner tone="warn" tag={t.needsAttention}>
+		<strong>{t.missingLead}</strong>
+		{t.missingBody(instance.missing_required.join(', '))}
 	</Banner>
 {/if}
 
@@ -206,11 +215,11 @@
 	<div class="cb-col-main">
 		<section class="cb-panel">
 			<div class="cb-panel-head">
-				<h2 class="cb-label">Connection</h2>
+				<h2 class="cb-label">{t.connection}</h2>
 				<span class="cb-hint">OAuth 2.1</span>
 			</div>
 			<div class="cb-panel-body">
-				<CodeBlock value={instance.url} name="connection URL" />
+				<CodeBlock value={instance.url} name={t.connectionUrl} />
 			</div>
 			<ClientGuides slug={instance.slug} url={instance.url} />
 		</section>
@@ -219,43 +228,33 @@
 			instanceId={instance.id}
 			slug={instance.slug}
 			env={instance.env}
-			allowedVars={server?.env_vars ?? []}
+			specs={server?.env ?? []}
+			missingRequired={instance.missing_required}
 			liveProcesses={status.live_processes}
 			onchange={invalidateAll}
 			onrestart={askToRestart}
 		/>
 
-		<form class="cb-panel" onsubmit={askToSaveSettings}>
+		<form class="cb-panel" onsubmit={askToRename}>
 			<div class="cb-panel-head">
-				<h2 class="cb-label">Settings</h2>
+				<h2 class="cb-label">{t.settings}</h2>
 			</div>
 			<div class="fields">
 				<SlugField id="settings-slug" bind:value={slug} error={settingsError} />
-				<div class="cb-field">
-					<span class="cb-label">Runtime</span>
-					<div>
-						<SegmentedControl
-							label="Runtime"
-							name="settings-runtime"
-							options={RUNTIMES}
-							bind:value={runtime}
-						/>
-					</div>
-				</div>
 			</div>
 			<div class="cb-panel-foot">
-				<Button type="submit" disabled={!hasSettingChanges}>Save settings</Button>
+				<Button type="submit" disabled={slug === instance.slug}>{t.saveSettings}</Button>
 			</div>
 		</form>
 
 		<section class="cb-panel">
 			<div class="cb-panel-head">
-				<h2 class="cb-label">Delete instance</h2>
+				<h2 class="cb-label">{t.deleteHeading}</h2>
 			</div>
 			<div class="cb-panel-body delete">
-				<p>Removes its saved values and its connection URL. This can't be undone.</p>
-				<Button variant="danger" busy={pendingAction === 'Delete instance'} onclick={askToDelete}>
-					{pendingAction === 'Delete instance' ? 'Deleting' : 'Delete instance'}
+				<p>{t.deleteBody}</p>
+				<Button variant="danger" busy={pendingAction === 'delete'} onclick={askToDelete}>
+					{pendingAction === 'delete' ? t.deleting : t.deleteHeading}
 				</Button>
 			</div>
 		</section>
@@ -264,28 +263,32 @@
 	<div class="cb-col-side">
 		<section class="cb-panel">
 			<div class="cb-panel-head">
-				<h2 class="cb-label">Status</h2>
-				<span class="cb-live">live</span>
+				<h2 class="cb-label">{t.statusPanel}</h2>
+				<span class="cb-live">{t.live}</span>
 			</div>
 			<dl class="cb-kv-list">
 				<div class="cb-kv">
-					<dt>Status</dt>
+					<dt>{t.kvStatus}</dt>
 					<dd><StatusBadge status={label} /></dd>
 				</div>
 				<div class="cb-kv">
-					<dt>Mode</dt>
+					<dt>{t.kvMode}</dt>
 					<dd>{status.mode ?? '-'}</dd>
 				</div>
 				<div class="cb-kv">
-					<dt>Runtime</dt>
+					<dt>{t.kvRuntime}</dt>
 					<dd>{status.runtime ?? '-'}</dd>
 				</div>
 				<div class="cb-kv">
-					<dt>Processes</dt>
-					<dd>{status.live_processes} live</dd>
+					<dt>{t.kvPackage}</dt>
+					<dd>{instance.package ?? '-'}</dd>
+				</div>
+				<div class="cb-kv">
+					<dt>{t.kvProcesses}</dt>
+					<dd>{t.liveCount(status.live_processes)}</dd>
 				</div>
 				<div class={['cb-kv', lastFailure && 'cb-kv--err']}>
-					<dt>Last exit</dt>
+					<dt>{t.kvLastExit}</dt>
 					<dd>{status.last_exit ?? '-'}</dd>
 				</div>
 			</dl>
@@ -298,12 +301,12 @@
 {#if confirmation}
 	{@const current = confirmation}
 	<ConfirmDialog
-		context={`Instance ${instance.slug}`}
+		context={i18n.t.common.instanceContext(instance.slug)}
 		title={current.title}
 		detail={current.detail}
 		action={current.action}
 		variant={current.variant}
-		onconfirm={() => act(current.action, current.run)}
+		onconfirm={() => act(current.name, current.run)}
 		oncancel={() => (confirmation = null)}
 	/>
 {/if}
