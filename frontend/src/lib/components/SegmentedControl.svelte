@@ -4,14 +4,19 @@
 		name,
 		options,
 		value = $bindable()
-	}: { label: string; name: string; options: readonly Option[]; value: Option } = $props();
+	}: {
+		label: string;
+		name: string;
+		options: readonly { value: Option; label: string }[];
+		value: Option;
+	} = $props();
 </script>
 
 <div class="cb-seg" role="radiogroup" aria-label={label}>
-	{#each options as option (option)}
+	{#each options as option (option.value)}
 		<label class="cb-seg-opt">
-			<input type="radio" {name} value={option} bind:group={value} />
-			<span>{option}</span>
+			<input type="radio" {name} value={option.value} bind:group={value} />
+			<span>{option.label}</span>
 		</label>
 	{/each}
 </div>

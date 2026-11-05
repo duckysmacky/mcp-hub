@@ -11,21 +11,7 @@
 
 	let { data, children }: LayoutProps = $props();
 
-	const inInstances = $derived(page.url.pathname.startsWith('/instances'));
-
-	// app.html sets this before first paint.
-	let theme = $state(document.documentElement.dataset.theme);
-	const otherThemeLabel = $derived(theme === 'light' ? 'Dark theme' : 'Light theme');
-
-	function toggleTheme() {
-		theme = theme === 'light' ? 'dark' : 'light';
-		document.documentElement.dataset.theme = theme;
-		try {
-			localStorage.setItem('theme', theme);
-		} catch {
-			// Storage can be blocked: the choice just lasts until the next reload.
-		}
-	}
+	const inSection = (section: string) => page.url.pathname.startsWith(section);
 
 	async function signOut() {
 		try {
@@ -37,21 +23,38 @@
 	}
 </script>
 
+{#snippet sectionLink(className: string)}
+	<a
+		class={className}
+		href={resolve('/(app)/instances')}
+		aria-current={inSection('/instances') ? 'page' : undefined}
+	>
+		{i18n.t.nav.instances}
+	</a>
+	<a
+		class={className}
+		href={resolve('/(app)/clients')}
+		aria-current={inSection('/clients') ? 'page' : undefined}
+	>
+		{i18n.t.nav.clients}
+	</a>
+	<a
+		class={className}
+		href={resolve('/(app)/settings')}
+		aria-current={inSection('/settings') ? 'page' : undefined}
+	>
+		{i18n.t.nav.settings}
+	</a>
+{/snippet}
+
 <header class="cb-nav">
 	<div class="cb-nav-in">
 		<Brand />
 		<nav class="cb-nav-links" aria-label={i18n.t.nav.primary}>
-			<a
-				class="cb-nav-link"
-				href={resolve('/(app)/instances')}
-				aria-current={inInstances ? 'page' : undefined}
-			>
-				{i18n.t.nav.instances}
-			</a>
+			{@render sectionLink('cb-nav-link')}
 		</nav>
 		<div class="cb-nav-user">
 			<span>{data.user?.username}</span>
-			<Button variant="ghost" size="sm" onclick={toggleTheme}>{otherThemeLabel}</Button>
 			<Button variant="ghost" size="sm" onclick={signOut}>{i18n.t.nav.signOut}</Button>
 		</div>
 		<button class="cb-btn cb-btn--ghost cb-menu-btn" type="button" popovertarget="account-menu">
@@ -61,12 +64,15 @@
 </header>
 
 <div class="cb-panel account-menu" id="account-menu" popover="auto">
-	<Button variant="ghost" block onclick={toggleTheme}>{otherThemeLabel}</Button>
 	<Button variant="ghost" block onclick={signOut}>{i18n.t.nav.signOut}</Button>
 </div>
 
 <main class="cb-page">
 	{@render children()}
 </main>
+
+<nav class="cb-tabbar" aria-label={i18n.t.nav.primary}>
+	{@render sectionLink('cb-tab')}
+</nav>
 
 <Toasts />
