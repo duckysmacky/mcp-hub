@@ -1,8 +1,8 @@
 // These mirror the backend's DTOs by hand: change them together.
 
-export const RUNTIMES = ['bun', 'node'] as const;
-export type Runtime = (typeof RUNTIMES)[number];
+export type Runtime = 'bun' | 'node' | 'uv' | 'pip';
 export type ServerMode = 'stdio' | 'http';
+export type SignupMode = 'enabled' | 'disabled' | 'invite-only';
 
 export interface User {
 	id: number;
@@ -10,14 +10,25 @@ export interface User {
 }
 
 export interface AuthConfig {
-	signup_enabled: boolean;
+	signup: SignupMode;
+}
+
+export interface EnvSpec {
+	name: string;
+	description: string;
+	type: 'string' | 'number' | 'boolean' | 'enum';
+	enum_values: string[];
+	secret: boolean;
+	required: boolean;
+	conflicts: string[];
 }
 
 export interface CatalogServer {
 	id: string;
 	mode: ServerMode;
-	default_runtime: Runtime;
-	env_vars: string[];
+	runtime: Runtime;
+	package: string;
+	env: EnvSpec[];
 }
 
 export interface EnvStatus {
@@ -25,6 +36,8 @@ export interface EnvStatus {
 	is_set: boolean;
 	updated_at: string;
 	in_catalog: boolean;
+	/** Only for variables the catalog marks `secret = false`. */
+	value?: string;
 }
 
 export interface Instance {
@@ -32,10 +45,13 @@ export interface Instance {
 	slug: string;
 	server_id: string;
 	runtime: Runtime | null;
+	package: string | null;
 	enabled: boolean;
 	needs_attention: string | null;
 	url: string;
 	env: EnvStatus[];
+	missing_required: string[];
+	disabled_tools: string[];
 	created_at: string;
 	updated_at: string;
 }
@@ -48,6 +64,25 @@ export interface InstanceStatus {
 	live_processes: number;
 	last_exit: string | null;
 	output_tail: string;
+}
+
+export interface ToolStatus {
+	name: string;
+	description: string | null;
+	disabled: boolean;
+}
+
+export interface Grant {
+	id: number;
+	instance_id: number;
+	slug: string;
+	server_id: string;
+	client_name_self_reported: string | null;
+	client_uri_self_reported: string | null;
+	logo_uri_self_reported: string | null;
+	redirect_hosts: string[];
+	created_at: string;
+	last_used_at: string | null;
 }
 
 export interface PendingAuthorization {

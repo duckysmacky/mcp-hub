@@ -3,21 +3,27 @@
 	import Brand from '#lib/components/Brand.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import SecretInput from '#lib/components/SecretInput.svelte';
+	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { safeNextPath } from '#lib/navigation.ts';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { Snippet } from 'svelte';
 
-	let { mode, foot }: { mode: 'login' | 'signup'; foot?: Snippet } = $props();
+	let {
+		mode,
+		needsInvite = false,
+		foot
+	}: { mode: 'login' | 'signup'; needsInvite?: boolean; foot?: Snippet } = $props();
 
 	let username = $state('');
 	let password = $state('');
+	let inviteCode = $state('');
 	let error = $state('');
 	let busy = $state(false);
 
 	const isSignup = $derived(mode === 'signup');
-	const title = $derived(isSignup ? 'Create account' : 'Sign in');
-	const busyLabel = $derived(isSignup ? 'Creating account' : 'Signing in');
+	const title = $derived(isSignup ? i18n.t.auth.createAccount : i18n.t.auth.signIn);
+	const busyLabel = $derived(isSignup ? i18n.t.auth.creatingAccount : i18n.t.auth.signingIn);
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
@@ -25,7 +31,11 @@
 		error = '';
 		try {
 			if (isSignup) {
-				await api.post('/auth/signup', { username, password });
+				await api.post('/auth/signup', {
+					username,
+					password,
+					invite_code: needsInvite ? inviteCode : undefined
+				});
 			}
 			await api.post('/auth/login', { username, password });
 			password = '';
@@ -34,7 +44,7 @@
 			await goto(safeNextPath(page.url.searchParams.get('next')), { invalidateAll: true });
 		} catch (failure) {
 			const wrongCredentials = failure instanceof ApiError && failure.status === 401;
-			error = wrongCredentials ? 'Wrong username or password.' : messageOf(failure);
+			error = wrongCredentials ? i18n.t.errors.wrongCredentials : messageOf(failure);
 		} finally {
 			busy = false;
 		}
@@ -47,8 +57,24 @@
 		<h1 class="cb-card-title">{title}</h1>
 	</div>
 	<div class="cb-card-body">
+		{#if needsInvite}
+			<div class="cb-field">
+				<label class="cb-label" for="invite-code">{i18n.t.auth.inviteCode}</label>
+				<input
+					class="cb-input"
+					id="invite-code"
+					bind:value={inviteCode}
+					autocomplete="off"
+					autocapitalize="none"
+					spellcheck="false"
+					required
+					aria-describedby="invite-help"
+				/>
+				<span class="cb-field-help" id="invite-help">{i18n.t.auth.inviteHelp}</span>
+			</div>
+		{/if}
 		<div class="cb-field">
-			<label class="cb-label" for="username">Username</label>
+			<label class="cb-label" for="username">{i18n.t.auth.username}</label>
 			<input
 				class="cb-input"
 				id="username"
@@ -60,7 +86,7 @@
 			/>
 		</div>
 		<div class="cb-field">
-			<label class="cb-label" for="password">Password</label>
+			<label class="cb-label" for="password">{i18n.t.auth.password}</label>
 			<SecretInput
 				id="password"
 				bind:value={password}
@@ -71,7 +97,7 @@
 			{#if error}
 				<span class="cb-field-error" id="password-note" role="alert">{error}</span>
 			{:else if isSignup}
-				<span class="cb-field-help" id="password-note">At least 8 characters.</span>
+				<span class="cb-field-help" id="password-note">{i18n.t.auth.passwordHelp}</span>
 			{/if}
 		</div>
 		<Button type="submit" variant="primary" size="lg" block {busy}>
