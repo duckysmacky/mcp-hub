@@ -51,6 +51,7 @@ pub struct StartRequest<'a> {
     pub instance_id: i64,
     pub runtime: RuntimeKind,
     pub script: &'a Path,
+    pub args: &'a [String],
     pub env: Vec<EnvValue>,
 }
 
@@ -60,6 +61,7 @@ pub struct StartUpstream<'a> {
     pub instance_id: i64,
     pub runtime: RuntimeKind,
     pub script: &'a Path,
+    pub args: &'a [String],
     pub http: &'a HttpSettings,
     pub env: Vec<EnvValue>,
     /// Every value of the instance, so that output can be redacted against all of them.
@@ -268,7 +270,7 @@ impl Supervisor {
         let command = build_child_command(&ChildSpec {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
             script: request.script,
-            args: &[],
+            args: request.args,
             env: &request.env,
             scratch_dir: &scratch_dir,
         });
@@ -332,7 +334,7 @@ impl Supervisor {
         let command = build_child_command(&ChildSpec {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
             script: request.script,
-            args: &request.http.bin_args,
+            args: request.args,
             env: &env,
             scratch_dir: &scratch_dir,
         });

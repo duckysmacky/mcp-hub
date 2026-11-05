@@ -16,7 +16,15 @@ id = "demo"
 mode = "stdio"
 runtime = "bun"
 package = "demo@1.0.0"
-env_vars = ["TOKEN", "BASE_URL", "FAKE_EXIT_AT_START"]
+
+[[server.env]]
+name = "TOKEN"
+
+[[server.env]]
+name = "BASE_URL"
+
+[[server.env]]
+name = "FAKE_EXIT_AT_START"
 "#;
 
 async fn app(pool: PgPool) -> McpApp {

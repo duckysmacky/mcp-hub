@@ -157,7 +157,6 @@ mod tests {
             runtime = "bun"
             package = "{package}"
             {bin_line}
-            env_vars = []
             "#
         ))
         .unwrap()
@@ -194,7 +193,6 @@ mod tests {
             runtime = "bun"
             package = "@s/demo@1.0.0"
             bin = "one"
-            env_vars = []
             "#,
         )
         .unwrap();

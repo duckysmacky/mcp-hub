@@ -13,7 +13,9 @@ id = "demo"
 mode = "stdio"
 runtime = "bun"
 package = "demo@1.0.0"
-env_vars = ["TOKEN"]
+
+[[server.env]]
+name = "TOKEN"
 "#;
 const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 

@@ -1,34 +1,129 @@
-# Allowed MCP servers. Users pick from this list and can only set the listed env vars.
-# Every package must pin an exact version. See .context/CATALOG.md.
-
-# Taiga with a token: HTTP mode, credential passed as a header
 [[server]]
-id       = "taiga"
+id       = "taiga-http"
+enabled  = true # admin toggles
 mode     = "http"
-runtime  = "bun"
-package  = "@madebyclowd/taiga-mcp-server@1.0.2"
+runtime  = "bun" # should be fixed - will be shown in GUI, but cannot be changed by user
+package  = "@madebyclowd/taiga-mcp-server@1.0.2" # the package name should be shown in the GUI
 bin      = "taiga-mcp-server-http"
-env_vars = ["TAIGA_BASE_URL", "TAIGA_TOKEN", "TAIGA_REQUIRE_ELICITATION"]
+bin_args = [] # optional arguments to pass to the binary
 
 [server.http]
 port_env = "HTTP_PORT"
 path     = "/mcp"
 headers  = { Authorization = "Bearer {TAIGA_TOKEN}" }
 
-# Taiga with username + password: only the stdio transport supports it
+[[server.env]]
+name        = "TAIGA_BASE_URL"
+description = "The base URL of the Taiga instance"
+type        = "string" # can be either string, number, boolean or custom enum
+secret      = false # when not a secret, can be freely edited and viewed in the GUI
+required    = true # when required, must be set in order to start the server
+
+# example of a custom enum (not a real env variable, only for showcase)
+[[server.env]]
+name        = "TAIGA_AUTH_METHOD"
+description = "The authentication method to use for the Taiga instance"
+type        = "enum"
+enum_values = ["username_password", "token"]
+secret      = false
+required    = true
+
+[[server.env]]
+name        = "TAIGA_TOKEN"
+description = "The token used to authenticate with the Taiga instance"
+type        = "string"
+secret      = true # when a secret, cannot be viewed in the GUI, only set (like right now)
+required    = true
+
+[[server.env]]
+name        = "TAIGA_REQUIRE_ELICITATION"
+description = "Whether to require elicitation for Taiga"
+type        = "boolean"
+secret      = false
+required    = true
+
+
+
 [[server]]
-id       = "taiga-password"
+id       = "taiga-stdio"
+enabled  = true
 mode     = "stdio"
 runtime  = "bun"
 package  = "@madebyclowd/taiga-mcp-server@1.0.2"
 bin      = "taiga-mcp-server"
-env_vars = ["TAIGA_BASE_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_REQUIRE_ELICITATION"]
 
-# Firefly III: its packages only read credentials from env or args, so stdio is the only safe mode
+[[server.env]]
+name        = "TAIGA_BASE_URL"
+description = "The base URL of the Taiga instance"
+type        = "string"
+secret      = false
+required    = true
+
+[[server.env]]
+name        = "TAIGA_USERNAME"
+description = "The username used to authenticate with the Taiga instance"
+type        = "string"
+secret      = false
+required    = true
+conflicts   = ["TAIGA_TOKEN"] # if one of the conflicting env vars is set, this one cannot be set, and vice versa (and GUI warnings)
+
+[[server.env]]
+name        = "TAIGA_PASSWORD"
+description = "The password used to authenticate with the Taiga instance"
+type        = "string"
+secret      = true
+required    = true
+conflicts   = ["TAIGA_TOKEN"]
+
+[[server.env]]
+name        = "TAIGA_TOKEN"
+description = "The token used to authenticate with the Taiga instance"
+type        = "string"
+secret      = true
+required    = true
+conflicts   = ["TAIGA_USERNAME", "TAIGA_PASSWORD"]
+
+[[server.env]]
+name        = "TAIGA_REQUIRE_ELICITATION"
+description = "Whether to require elicitation for Taiga"
+type        = "boolean"
+secret      = false
+required    = false
+
+
+
 [[server]]
 id       = "firefly"
+enabled  = true
 mode     = "stdio"
 runtime  = "bun"
 package  = "@firefly-iii-mcp/local@1.4.0"
 bin      = "firefly-iii-mcp"
-env_vars = ["FIREFLY_III_BASE_URL", "FIREFLY_III_PAT", "FIREFLY_III_PRESET", "FIREFLY_III_TOOLS"]
+
+[[server.env]]
+name        = "FIREFLY_III_BASE_URL"
+description = "The base URL of the Firefly III instance"
+type        = "string"
+secret      = false
+required    = true
+
+[[server.env]]
+name        = "FIREFLY_III_PAT"
+description = "The personal access token for the Firefly III instance"
+type        = "string"
+secret      = true
+required    = true
+
+[[server.env]]
+name        = "FIREFLY_III_PRESET"
+description = "The preset to use for the Firefly III instance"
+type        = "string"
+secret      = false
+required    = true
+
+[[server.env]]
+name        = "FIREFLY_III_TOOLS"
+description = "The tools to use for the Firefly III instance"
+type        = "string"
+secret      = false
+required    = false

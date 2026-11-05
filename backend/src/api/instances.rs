@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use crate::{
     app_state::AppState,
     auth::CurrentSession,
-    catalog::{RuntimeKind, ServerMode, ServerTemplate},
+    catalog::{EnvSpec, RuntimeKind, ServerMode, ServerTemplate},
     crypto, db,
     db::instances::{Instance, is_valid_slug},
     error::ApiError,
@@ -46,8 +46,9 @@ pub fn routes() -> Router<AppState> {
 struct CatalogServer {
     id: String,
     mode: ServerMode,
-    default_runtime: RuntimeKind,
-    env_vars: Vec<String>,
+    runtime: RuntimeKind,
+    package: String,
+    env: Vec<EnvSpec>,
 }
 
 async fn list_catalog(
@@ -57,11 +58,13 @@ async fn list_catalog(
     let servers = state
         .catalog
         .servers()
+        .filter(|server| server.enabled)
         .map(|server| CatalogServer {
             id: server.id.clone(),
             mode: server.mode,
-            default_runtime: server.runtime,
-            env_vars: server.env_vars.clone(),
+            runtime: server.runtime,
+            package: server.package.clone(),
+            env: server.env.clone(),
         })
         .collect();
     Json(servers)
@@ -98,7 +101,7 @@ async fn describe(state: &AppState, instance: Instance) -> Result<InstanceRespon
         .await?
         .into_iter()
         .map(|entry| EnvStatus {
-            in_catalog: template.is_some_and(|server| server.env_vars.contains(&entry.env_var)),
+            in_catalog: template.is_some_and(|server| server.env_spec(&entry.env_var).is_some()),
             var: entry.env_var,
             is_set: true,
             updated_at: entry.updated_at,
@@ -255,7 +258,7 @@ async fn set_env_value(
 ) -> Result<StatusCode, ApiError> {
     let instance = owned_instance(&state, &session, id).await?;
     let template = template_of(&state, &instance)?;
-    if !template.env_vars.contains(&var) {
+    if template.env_spec(&var).is_none() {
         return Err(ApiError::BadRequest(
             "this server doesn't allow that variable".to_owned(),
         ));

@@ -13,14 +13,21 @@ id = "demo"
 mode = "stdio"
 runtime = "bun"
 package = "demo@1.0.0"
-env_vars = ["BASE_URL", "TOKEN"]
+
+[[server.env]]
+name = "BASE_URL"
+
+[[server.env]]
+name = "TOKEN"
 
 [[server]]
 id = "other"
 mode = "stdio"
 runtime = "node"
 package = "other@1.0.0"
-env_vars = ["TOKEN"]
+
+[[server.env]]
+name = "TOKEN"
 "#;
 
 struct Setup {
@@ -94,8 +101,28 @@ async fn catalog_lists_servers(pool: PgPool) {
         json!({
             "id": "demo",
             "mode": "stdio",
-            "default_runtime": "bun",
-            "env_vars": ["BASE_URL", "TOKEN"],
+            "runtime": "bun",
+            "package": "demo@1.0.0",
+            "env": [
+                {
+                    "name": "BASE_URL",
+                    "description": "",
+                    "type": "string",
+                    "enum_values": [],
+                    "secret": true,
+                    "required": false,
+                    "conflicts": [],
+                },
+                {
+                    "name": "TOKEN",
+                    "description": "",
+                    "type": "string",
+                    "enum_values": [],
+                    "secret": true,
+                    "required": false,
+                    "conflicts": [],
+                },
+            ],
         })
     );
 }

@@ -61,8 +61,6 @@ impl RuntimeKind {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpSettings {
-    #[serde(default)]
-    pub bin_args: Vec<String>,
     pub port_env: String,
     #[serde(default = "default_mcp_path")]
     pub path: String,
@@ -85,16 +83,62 @@ impl HttpSettings {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvType {
+    #[default]
+    String,
+    Number,
+    Boolean,
+    Enum,
+}
+
+/// One env var a user may set for a server. Sent as is to the UI through `/api/catalog`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, rename = "type")]
+    pub kind: EnvType,
+    #[serde(default)]
+    pub enum_values: Vec<String>,
+    /// Secret unless the operator says otherwise: a forgotten flag must not expose a value.
+    #[serde(default = "default_true")]
+    pub secret: bool,
+    #[serde(default)]
+    pub required: bool,
+    /// Vars that can't be set together with this one.
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTemplate {
     pub id: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub mode: ServerMode,
     pub runtime: RuntimeKind,
     pub package: String,
     pub bin: Option<String>,
-    pub env_vars: Vec<String>,
+    #[serde(default)]
+    pub bin_args: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<EnvSpec>,
     pub http: Option<HttpSettings>,
+}
+
+impl ServerTemplate {
+    pub fn env_spec(&self, name: &str) -> Option<&EnvSpec> {
+        self.env.iter().find(|spec| spec.name == name)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,11 +197,12 @@ fn validate_server(server: &ServerTemplate) -> Result<(), String> {
     split_package_spec(&server.package)?;
 
     let mut seen = HashSet::new();
-    for var in &server.env_vars {
-        validate_env_name(var)?;
-        if !seen.insert(var.as_str()) {
-            return Err(format!("env var {var} is listed twice"));
+    for spec in &server.env {
+        validate_env_name(&spec.name)?;
+        if !seen.insert(spec.name.as_str()) {
+            return Err(format!("env var {} is listed twice", spec.name));
         }
+        validate_env_spec(server, spec)?;
     }
 
     match (server.mode, &server.http) {
@@ -170,11 +215,32 @@ fn validate_server(server: &ServerTemplate) -> Result<(), String> {
     }
 }
 
+fn validate_env_spec(server: &ServerTemplate, spec: &EnvSpec) -> Result<(), String> {
+    let name = &spec.name;
+    match (spec.kind, spec.enum_values.is_empty()) {
+        (EnvType::Enum, true) => return Err(format!("enum var {name} needs enum_values")),
+        (EnvType::Enum, false) | (_, true) => {}
+        (_, false) => return Err(format!("{name} has enum_values but isn't an enum")),
+    }
+    for other in &spec.conflicts {
+        if other == name {
+            return Err(format!("{name} conflicts with itself"));
+        }
+        let other_spec = server
+            .env_spec(other)
+            .ok_or_else(|| format!("{name} conflicts with unknown var {other}"))?;
+        if !other_spec.conflicts.contains(name) {
+            return Err(format!("{other} must also list {name} in its conflicts"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_http(server: &ServerTemplate, http: &HttpSettings) -> Result<(), String> {
     validate_env_name(&http.port_env)?;
-    if server.env_vars.contains(&http.port_env) {
+    if server.env_spec(&http.port_env).is_some() {
         return Err(format!(
-            "port_env {} must not appear in env_vars",
+            "port_env {} must not be a user-settable env var",
             http.port_env
         ));
     }
@@ -188,10 +254,8 @@ fn validate_http(server: &ServerTemplate, http: &HttpSettings) -> Result<(), Str
             return Err(format!("header {name} is managed by the hub"));
         }
         for var in template_vars(template)? {
-            if !server.env_vars.iter().any(|allowed| allowed == var) {
-                return Err(format!(
-                    "header {name} uses {{{var}}}, which is not in env_vars"
-                ));
+            if server.env_spec(var).is_none() {
+                return Err(format!("header {name} uses {{{var}}}, which is not in env"));
             }
         }
     }
@@ -352,10 +416,15 @@ mod tests {
         runtime = "bun"
         package = "@madebyclowd/taiga-mcp-server@1.0.2"
         bin = "taiga-mcp-server"
-        env_vars = ["TAIGA_BASE_URL", "TAIGA_PASSWORD"]
+
+        [[server.env]]
+        name = "TAIGA_BASE_URL"
+
+        [[server.env]]
+        name = "TAIGA_PASSWORD"
     "#;
 
-    fn http_catalog(env_vars: &str, port_env: &str, headers: &str) -> String {
+    fn http_catalog(env_var: &str, port_env: &str, headers: &str) -> String {
         format!(
             r#"
             [[server]]
@@ -363,13 +432,19 @@ mod tests {
             mode = "http"
             runtime = "bun"
             package = "taiga@1.0.2"
-            env_vars = {env_vars}
+
+            [[server.env]]
+            name = "{env_var}"
 
             [server.http]
             port_env = "{port_env}"
             headers = {headers}
             "#
         )
+    }
+
+    fn with_extra_env(fields: &str) -> String {
+        format!("{STDIO}\n[[server.env]]\nname = \"EXTRA\"\n{fields}\n")
     }
 
     fn with_env_var(name: &str) -> String {
@@ -379,14 +454,14 @@ mod tests {
     #[test]
     fn example_catalog_is_valid() {
         let catalog = Catalog::parse(include_str!("../../../catalog.example.toml")).unwrap();
-        assert_eq!(catalog.get("taiga").unwrap().mode, ServerMode::Http);
+        assert_eq!(catalog.get("taiga-http").unwrap().mode, ServerMode::Http);
         assert_eq!(catalog.get("firefly").unwrap().mode, ServerMode::Stdio);
     }
 
     #[test]
     fn header_vars_are_separated_from_process_env() {
         let catalog = Catalog::parse(include_str!("../../../catalog.example.toml")).unwrap();
-        let http = catalog.get("taiga").unwrap().http.as_ref().unwrap();
+        let http = catalog.get("taiga-http").unwrap().http.as_ref().unwrap();
         assert_eq!(http.header_vars(), HashSet::from(["TAIGA_TOKEN"]));
         assert_eq!(http.path, "/mcp");
     }
@@ -466,20 +541,16 @@ mod tests {
 
     #[test]
     fn http_rules_are_enforced() {
-        let valid = http_catalog(
-            r#"["TOKEN"]"#,
-            "PORT",
-            r#"{ Authorization = "Bearer {TOKEN}" }"#,
-        );
+        let valid = http_catalog("TOKEN", "PORT", r#"{ Authorization = "Bearer {TOKEN}" }"#);
         assert!(Catalog::parse(&valid).is_ok());
 
-        let port_in_env_vars = http_catalog(r#"["PORT"]"#, "PORT", "{}");
-        assert!(Catalog::parse(&port_in_env_vars).is_err());
+        let port_in_env = http_catalog("PORT", "PORT", "{}");
+        assert!(Catalog::parse(&port_in_env).is_err());
 
-        let unknown_var = http_catalog(r#"["TOKEN"]"#, "PORT", r#"{ X-A = "{OTHER}" }"#);
+        let unknown_var = http_catalog("TOKEN", "PORT", r#"{ X-A = "{OTHER}" }"#);
         assert!(Catalog::parse(&unknown_var).is_err());
 
-        let unclosed = http_catalog(r#"["TOKEN"]"#, "PORT", r#"{ X-A = "{TOKEN" }"#);
+        let unclosed = http_catalog("TOKEN", "PORT", r#"{ X-A = "{TOKEN" }"#);
         assert!(Catalog::parse(&unclosed).is_err());
 
         for header in [
@@ -488,16 +559,75 @@ mod tests {
             "Mcp-Session-Id",
             "MCP-Protocol-Version",
         ] {
-            let forbidden =
-                http_catalog(r#"["TOKEN"]"#, "PORT", &format!(r#"{{ {header} = "x" }}"#));
+            let forbidden = http_catalog("TOKEN", "PORT", &format!(r#"{{ {header} = "x" }}"#));
             assert!(Catalog::parse(&forbidden).is_err(), "{header}");
         }
 
-        let bad_name = http_catalog(r#"["TOKEN"]"#, "PORT", r#"{ "Bad Header" = "x" }"#);
+        let bad_name = http_catalog("TOKEN", "PORT", r#"{ "Bad Header" = "x" }"#);
         assert!(Catalog::parse(&bad_name).is_err());
 
-        let denied_port = http_catalog(r#"["TOKEN"]"#, "NODE_PORT", "{}");
+        let denied_port = http_catalog("TOKEN", "NODE_PORT", "{}");
         assert!(Catalog::parse(&denied_port).is_err());
+    }
+
+    #[test]
+    fn env_specs_default_to_secret_optional_strings() {
+        let catalog = Catalog::parse(STDIO).unwrap();
+        let server = catalog.get("taiga-password").unwrap();
+        let spec = server.env_spec("TAIGA_PASSWORD").unwrap();
+        assert!(spec.secret);
+        assert!(!spec.required);
+        assert_eq!(spec.kind, EnvType::String);
+        assert!(server.enabled);
+        assert!(server.bin_args.is_empty());
+    }
+
+    #[test]
+    fn enum_values_must_match_the_type() {
+        assert!(Catalog::parse(&with_extra_env("type = \"enum\"\nenum_values = [\"a\"]")).is_ok());
+        assert!(Catalog::parse(&with_extra_env("type = \"enum\"")).is_err());
+        assert!(Catalog::parse(&with_extra_env("enum_values = [\"a\"]")).is_err());
+        assert!(Catalog::parse(&with_extra_env("type = \"nonsense\"")).is_err());
+    }
+
+    #[test]
+    fn conflicts_must_be_known_and_symmetric() {
+        let declare = |first: &str, second: &str| {
+            format!(
+                r#"
+                [[server]]
+                id = "demo"
+                mode = "stdio"
+                runtime = "bun"
+                package = "demo@1.0.0"
+
+                [[server.env]]
+                name = "A"
+                conflicts = {first}
+
+                [[server.env]]
+                name = "B"
+                conflicts = {second}
+                "#
+            )
+        };
+        assert!(Catalog::parse(&declare(r#"["B"]"#, r#"["A"]"#)).is_ok());
+        assert!(Catalog::parse(&declare(r#"["B"]"#, "[]")).is_err());
+        assert!(Catalog::parse(&declare(r#"["A"]"#, "[]")).is_err());
+        assert!(Catalog::parse(&declare(r#"["C"]"#, "[]")).is_err());
+    }
+
+    #[test]
+    fn old_env_vars_key_is_rejected() {
+        let old = r#"
+            [[server]]
+            id = "demo"
+            mode = "stdio"
+            runtime = "bun"
+            package = "demo@1.0.0"
+            env_vars = ["A"]
+        "#;
+        assert!(Catalog::parse(old).is_err());
     }
 
     #[test]

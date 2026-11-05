@@ -31,6 +31,7 @@ async fn start(
             instance_id,
             runtime: RuntimeKind::Bun,
             script: Path::new("ignored.js"),
+            args: &[],
             env: Vec::new(),
         })
         .await

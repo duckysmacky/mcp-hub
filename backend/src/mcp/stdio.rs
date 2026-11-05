@@ -62,6 +62,7 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
             instance_id: target.instance.id,
             runtime: target.instance.effective_runtime(target.template),
             script: target.script()?,
+            args: &target.template.bin_args,
             env: declared_process_env(target.template, values),
         })
         .await;

@@ -14,7 +14,18 @@ id = "demo"
 mode = "http"
 runtime = "bun"
 package = "demo@1.0.0"
-env_vars = ["BASE_URL", "TOKEN", "FAKE_NO_LISTEN", "FAKE_REQUIRE_AUTH"]
+
+[[server.env]]
+name = "BASE_URL"
+
+[[server.env]]
+name = "TOKEN"
+
+[[server.env]]
+name = "FAKE_NO_LISTEN"
+
+[[server.env]]
+name = "FAKE_REQUIRE_AUTH"
 
 [server.http]
 port_env = "FAKE_HTTP_PORT"

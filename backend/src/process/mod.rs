@@ -85,8 +85,7 @@ pub fn declared_process_env(template: &ServerTemplate, values: Vec<EnvValue>) ->
     values
         .into_iter()
         .filter(|(name, _)| {
-            template.env_vars.iter().any(|allowed| allowed == name)
-                && !header_vars.contains(name.as_str())
+            template.env_spec(name).is_some() && !header_vars.contains(name.as_str())
         })
         .collect()
 }
@@ -352,7 +351,12 @@ mod tests {
             mode = "http"
             runtime = "bun"
             package = "demo@1.0.0"
-            env_vars = ["BASE_URL", "TOKEN"]
+
+            [[server.env]]
+            name = "BASE_URL"
+
+            [[server.env]]
+            name = "TOKEN"
 
             [server.http]
             port_env = "PORT"

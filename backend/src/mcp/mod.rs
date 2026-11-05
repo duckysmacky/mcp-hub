@@ -183,7 +183,7 @@ impl Target<'_> {
         let rows = db::instances::env_ciphertexts(&self.state.pool, self.instance.id).await?;
         let mut values = Vec::with_capacity(rows.len());
         for row in rows {
-            if self.template.env_vars.contains(&row.env_var) {
+            if self.template.env_spec(&row.env_var).is_some() {
                 let value =
                     crypto::decrypt_env(&dek, self.instance.id, &row.env_var, &row.ciphertext)?;
                 values.push((row.env_var, value));

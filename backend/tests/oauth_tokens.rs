@@ -19,7 +19,9 @@ id = "demo"
 mode = "stdio"
 runtime = "bun"
 package = "demo@1.0.0"
-env_vars = ["TOKEN"]
+
+[[server.env]]
+name = "TOKEN"
 "#;
 
 async fn setup(pool: PgPool) -> (TestApp, String, i64) {
