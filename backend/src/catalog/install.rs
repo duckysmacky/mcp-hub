@@ -24,6 +24,10 @@ const PIP_TARGET: &str = "site";
 const BUN_LOCKFILE: &str = "bun.lock";
 const PYTHON_LOCKFILE: &str = "requirements.lock";
 
+/// Users' own servers install here, each under its instance id. Catalog ids can't start with
+/// a dot, so nothing collides, and the package tools' caches stay apart from the catalog's.
+const CUSTOM_DIRECTORY: &str = ".custom";
+
 /// What a server's processes run.
 #[derive(Clone, Debug)]
 pub struct ResolvedServer {
@@ -93,19 +97,57 @@ pub async fn reinstall_server(
     packages_dir: &Path,
     runtimes: &RuntimeSettings,
 ) -> Result<(), InstallError> {
-    let directory = packages_dir.join(&server.id);
-    match tokio::fs::remove_dir_all(&directory).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(failed(
-                server,
-                format!("removing {}: {error}", directory.display()),
-            ));
-        }
-    }
+    remove_directory(server, &packages_dir.join(&server.id)).await?;
     install_server(server, lock, packages_dir, runtimes).await?;
     resolve_server(server, packages_dir).map(|_| ())
+}
+
+fn custom_root(settings: &Settings) -> PathBuf {
+    settings.paths.packages.join(CUSTOM_DIRECTORY)
+}
+
+/// What an installed custom server runs. An error means it needs installing first.
+pub fn resolve_custom(
+    server: &ServerTemplate,
+    settings: &Settings,
+) -> Result<ResolvedServer, InstallError> {
+    resolve_server(server, &custom_root(settings))
+}
+
+/// Installs a custom server from scratch. There is no committed lock, so its tree is resolved
+/// first, and then installed the same frozen way as a catalog server, with scripts off.
+pub async fn install_custom(
+    server: &ServerTemplate,
+    settings: &Settings,
+) -> Result<ResolvedServer, InstallError> {
+    let root = custom_root(settings);
+    remove_directory(server, &root.join(&server.id)).await?;
+    let work_dir = settings.paths.scratch.join("custom-lock");
+    let locked = lock_entry(server, &root, &work_dir, &settings.runtimes).await?;
+    let mut lock = CatalogLock::default();
+    lock.insert(server.id.clone(), locked);
+    install_server(server, &lock, &root, &settings.runtimes).await?;
+    resolve_server(server, &root)
+}
+
+/// Removes what a deleted instance's custom server installed, if anything.
+pub async fn remove_custom(instance_id: i64, settings: &Settings) -> std::io::Result<()> {
+    let directory = custom_root(settings).join(instance_id.to_string());
+    match tokio::fs::remove_dir_all(&directory).await {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+async fn remove_directory(server: &ServerTemplate, directory: &Path) -> Result<(), InstallError> {
+    match tokio::fs::remove_dir_all(directory).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(failed(
+            server,
+            format!("removing {}: {error}", directory.display()),
+        )),
+    }
 }
 
 async fn write_file(server: &ServerTemplate, path: &Path, text: &str) -> Result<(), InstallError> {
@@ -249,22 +291,29 @@ async fn lock_missing(
         if lock.get(&server.id).is_some() {
             continue;
         }
-        tracing::info!(server = %server.id, package = %server.package, "locking package");
-        let directory = work_dir.join(&server.id);
-        create_directory(server, &directory).await?;
-        let text = lock_server(server, packages_dir, &directory, runtimes).await;
-        // A leftover directory is only clutter, so a failure to remove it isn't one.
-        let _ = tokio::fs::remove_dir_all(&directory).await;
-        lock.insert(
-            server.id.clone(),
-            LockedServer {
-                package: server.package.clone(),
-                runtime: server.runtime,
-                lock: text?,
-            },
-        );
+        let locked = lock_entry(server, packages_dir, work_dir, runtimes).await?;
+        lock.insert(server.id.clone(), locked);
     }
     Ok(())
+}
+
+async fn lock_entry(
+    server: &ServerTemplate,
+    packages_dir: &Path,
+    work_dir: &Path,
+    runtimes: &RuntimeSettings,
+) -> Result<LockedServer, InstallError> {
+    tracing::info!(server = %server.id, package = %server.package, "locking package");
+    let directory = work_dir.join(&server.id);
+    create_directory(server, &directory).await?;
+    let text = lock_server(server, packages_dir, &directory, runtimes).await;
+    // A leftover directory is only clutter, so a failure to remove it isn't one.
+    let _ = tokio::fs::remove_dir_all(&directory).await;
+    Ok(LockedServer {
+        package: server.package.clone(),
+        runtime: server.runtime,
+        lock: text?,
+    })
 }
 
 async fn lock_server(
@@ -338,13 +387,20 @@ async fn lock_server(
 /// The SHA-256 of a binary server's file, in hex: all a binary's lock needs to hold.
 async fn binary_hash(server: &ServerTemplate) -> Result<String, InstallError> {
     let path = binary_path(server)?;
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|e| failed(server, format!("reading {}: {e}", path.display())))?;
-    Ok(Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    // Reachable from a request through custom servers, and a binary can be large.
+    let hashed = tokio::task::spawn_blocking(move || {
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("reading {}: {error}", path.display()))?;
+        Ok::<String, String>(
+            Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        )
+    })
+    .await
+    .map_err(|error| failed(server, format!("hashing the binary: {error}")))?;
+    hashed.map_err(|reason| failed(server, reason))
 }
 
 /// Finds a binary server's file: an absolute `package` as is, a bare name on the hub's own

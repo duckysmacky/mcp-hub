@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { api, messageOf } from '#lib/api/client.ts';
 	import type { Instance } from '#lib/api/types.ts';
+	import Banner from '#lib/components/Banner.svelte';
 	import Button from '#lib/components/Button.svelte';
+	import CustomServerForm from '#lib/components/CustomServerForm.svelte';
 	import Select from '#lib/components/Select.svelte';
 	import SlugField from '#lib/components/SlugField.svelte';
+	import { definitionOf, emptyDraft } from '#lib/custom-server.ts';
 	import { i18n } from '#lib/i18n/index.svelte.ts';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -11,7 +14,11 @@
 
 	let { data }: PageProps = $props();
 
-	let serverId = $derived(data.servers[0]?.id ?? '');
+	const CUSTOM = 'custom';
+
+	let serverId = $derived(data.servers[0]?.id ?? (data.settings.custom_servers ? CUSTOM : ''));
+	const isCustom = $derived(serverId === CUSTOM);
+	let draft = $state(emptyDraft());
 	const server = $derived(data.servers.find((candidate) => candidate.id === serverId));
 	// Follows the chosen server until the user edits it.
 	let slug = $derived(data.requestedSlug ?? serverId);
@@ -24,7 +31,10 @@
 		busy = true;
 		error = '';
 		try {
-			const instance = await api.post<Instance>('/instances', { server_id: serverId, slug });
+			const body = isCustom
+				? { slug, custom: definitionOf($state.snapshot(draft)) }
+				: { slug, server_id: serverId };
+			const instance = await api.post<Instance>('/instances', body);
 			await goto(resolve('/(app)/instances/[id]', { id: String(instance.id) }));
 		} catch (failure) {
 			error = messageOf(failure);
@@ -47,13 +57,19 @@
 	<h1 class="cb-page-title">{i18n.t.instances.newInstance}</h1>
 </div>
 
-{#if !server}
+{#if !server && !isCustom}
 	<div class="cb-empty">
 		<span class="cb-empty-mark">{i18n.t.newInstance.emptyMark}</span>
 		<h2 class="cb-empty-title">{i18n.t.newInstance.emptyTitle}</h2>
 		<p class="cb-empty-body">{i18n.t.newInstance.emptyBody}</p>
 	</div>
 {:else}
+	{#if isCustom}
+		<Banner tone="warn" tag={i18n.t.custom.warningTag}>
+			<strong>{i18n.t.custom.warningLead}</strong>
+			{i18n.t.custom.warningBody}
+		</Banner>
+	{/if}
 	<div class="cb-cols">
 		<form class="cb-panel cb-col-main" onsubmit={create}>
 			<div class="fields">
@@ -63,9 +79,18 @@
 						{#each data.servers as option (option.id)}
 							<option value={option.id}>{option.id}</option>
 						{/each}
+						{#if data.settings.custom_servers}
+							<option value={CUSTOM}>{i18n.t.custom.option}</option>
+						{/if}
 					</Select>
 				</div>
-				<SlugField id="slug" bind:value={slug} {error} />
+				<SlugField id="slug" bind:value={slug} error={isCustom ? '' : error} />
+				{#if isCustom}
+					<CustomServerForm idPrefix="custom" bind:draft />
+					{#if error}
+						<p class="cb-field-error" role="alert">{error}</p>
+					{/if}
+				{/if}
 			</div>
 			<div class="cb-panel-foot">
 				<Button type="submit" variant="primary" {busy}>
@@ -77,42 +102,44 @@
 			</div>
 		</form>
 
-		<section class="cb-panel cb-col-side">
-			<div class="cb-panel-head">
-				<h2 class="cb-label">{i18n.t.newInstance.server}</h2>
-				<span class="cb-hint">{server.id}</span>
-			</div>
-			<dl class="cb-kv-list">
-				<div class="cb-kv">
-					<dt>{i18n.t.instance.kvMode}</dt>
-					<dd>{server.mode}</dd>
+		{#if server && !isCustom}
+			<section class="cb-panel cb-col-side">
+				<div class="cb-panel-head">
+					<h2 class="cb-label">{i18n.t.newInstance.server}</h2>
+					<span class="cb-hint">{server.id}</span>
 				</div>
-				<div class="cb-kv">
-					<dt>{i18n.t.instance.kvRuntime}</dt>
-					<dd>{server.runtime}</dd>
-				</div>
-				<div class="cb-kv">
-					<dt>{i18n.t.instance.kvPackage}</dt>
-					<dd>{server.package}</dd>
-				</div>
-			</dl>
-			<div class="cb-log-head">
-				<h3 class="cb-label">{i18n.t.newInstance.variables}</h3>
-			</div>
-			<div class="cb-rows">
-				{#each server.env as spec (spec.name)}
-					<div class="cb-row variable">
-						<div>
-							<strong>{spec.name}</strong>
-							{#if spec.required}<span class="cb-tag">{i18n.t.common.required}</span>{/if}
-						</div>
-						{#if spec.description}<span class="cb-hint">{spec.description}</span>{/if}
+				<dl class="cb-kv-list">
+					<div class="cb-kv">
+						<dt>{i18n.t.instance.kvMode}</dt>
+						<dd>{server.mode}</dd>
 					</div>
-				{:else}
-					<div class="cb-row cb-muted">{i18n.t.newInstance.noVariables}</div>
-				{/each}
-			</div>
-		</section>
+					<div class="cb-kv">
+						<dt>{i18n.t.instance.kvRuntime}</dt>
+						<dd>{server.runtime}</dd>
+					</div>
+					<div class="cb-kv">
+						<dt>{i18n.t.instance.kvPackage}</dt>
+						<dd>{server.package}</dd>
+					</div>
+				</dl>
+				<div class="cb-log-head">
+					<h3 class="cb-label">{i18n.t.newInstance.variables}</h3>
+				</div>
+				<div class="cb-rows">
+					{#each server.env as spec (spec.name)}
+						<div class="cb-row variable">
+							<div>
+								<strong>{spec.name}</strong>
+								{#if spec.required}<span class="cb-tag">{i18n.t.common.required}</span>{/if}
+							</div>
+							{#if spec.description}<span class="cb-hint">{spec.description}</span>{/if}
+						</div>
+					{:else}
+						<div class="cb-row cb-muted">{i18n.t.newInstance.noVariables}</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
 	</div>
 {/if}
 

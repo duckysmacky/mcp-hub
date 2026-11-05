@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 
 use crate::{
     bridge::tools::ToolSummary,
+    catalog::CustomServer,
     error::{ApiError, conflict_on_duplicate},
 };
 
@@ -22,6 +23,8 @@ pub struct Instance {
     pub enabled: bool,
     pub needs_attention: Option<String>,
     pub disabled_tools: Json<Vec<String>>,
+    /// A user's own definition. `None` means `server_id` names a catalog server.
+    pub custom: Option<Json<CustomServer>>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -51,17 +54,20 @@ pub async fn create(
     user_id: i64,
     slug: &str,
     server_id: &str,
+    custom: Option<&CustomServer>,
 ) -> Result<Instance, ApiError> {
     sqlx::query_as!(
         Instance,
-        r#"INSERT INTO instances (user_id, slug, server_id)
-           VALUES ($1, $2, $3)
+        r#"INSERT INTO instances (user_id, slug, server_id, custom)
+           VALUES ($1, $2, $3, $4)
            RETURNING id, user_id, slug, server_id, enabled, needs_attention,
                      disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  custom AS "custom?: Json<CustomServer>",
                      created_at, updated_at"#,
         user_id,
         slug,
         server_id,
+        custom.map(Json) as _,
     )
     .fetch_one(pool)
     .await
@@ -82,6 +88,7 @@ pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Instance>, sqlx::Er
         Instance,
         r#"SELECT id, user_id, slug, server_id, enabled, needs_attention,
                   disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  custom AS "custom?: Json<CustomServer>",
                   created_at, updated_at
            FROM instances WHERE user_id = $1 ORDER BY slug"#,
         user_id,
@@ -95,6 +102,7 @@ pub async fn get(pool: &PgPool, user_id: i64, id: i64) -> Result<Option<Instance
         Instance,
         r#"SELECT id, user_id, slug, server_id, enabled, needs_attention,
                   disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  custom AS "custom?: Json<CustomServer>",
                   created_at, updated_at
            FROM instances WHERE id = $1 AND user_id = $2"#,
         id,
@@ -113,6 +121,7 @@ pub async fn find_by_slug(
         Instance,
         r#"SELECT id, user_id, slug, server_id, enabled, needs_attention,
                   disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  custom AS "custom?: Json<CustomServer>",
                   created_at, updated_at
            FROM instances WHERE user_id = $1 AND slug = $2"#,
         user_id,
@@ -139,6 +148,7 @@ pub async fn update(
            WHERE id = $1 AND user_id = $2
            RETURNING id, user_id, slug, server_id, enabled, needs_attention,
                      disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  custom AS "custom?: Json<CustomServer>",
                      created_at, updated_at"#,
         id,
         user_id,
@@ -148,6 +158,25 @@ pub async fn update(
     .fetch_optional(pool)
     .await
     .map_err(|error| conflict_on_duplicate(error, SLUG_TAKEN))
+}
+
+/// Replaces a custom instance's definition. Returns false for any other instance.
+pub async fn update_custom(
+    pool: &PgPool,
+    user_id: i64,
+    id: i64,
+    custom: &CustomServer,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        "UPDATE instances SET custom = $3, updated_at = now()
+         WHERE id = $1 AND user_id = $2 AND custom IS NOT NULL",
+        id,
+        user_id,
+        Json(custom) as _,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn delete(pool: &PgPool, user_id: i64, id: i64) -> Result<bool, sqlx::Error> {
@@ -188,7 +217,8 @@ pub async fn sync_with_catalog(
     sqlx::query!(
         "UPDATE instances
          SET enabled = false, needs_attention = 'server_removed', updated_at = now()
-         WHERE NOT (server_id = ANY($1) OR server_id = ANY($2))
+         WHERE custom IS NULL
+           AND NOT (server_id = ANY($1) OR server_id = ANY($2))
            AND needs_attention IS DISTINCT FROM 'server_removed'",
         enabled_server_ids,
         disabled_server_ids,
@@ -210,6 +240,28 @@ pub async fn sync_with_catalog(
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Flags custom instances while the operator has them turned off, and clears the flag when
+/// they're back. Like a returning catalog server, they stay disabled until started again.
+pub async fn sync_custom_servers(pool: &PgPool, allowed: bool) -> Result<(), sqlx::Error> {
+    if allowed {
+        sqlx::query!(
+            "UPDATE instances SET needs_attention = NULL, updated_at = now()
+             WHERE custom IS NOT NULL AND needs_attention = 'custom_disabled'",
+        )
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query!(
+            "UPDATE instances
+             SET enabled = false, needs_attention = 'custom_disabled', updated_at = now()
+             WHERE custom IS NOT NULL AND needs_attention IS DISTINCT FROM 'custom_disabled'",
+        )
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 

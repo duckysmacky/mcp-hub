@@ -65,7 +65,11 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
     if let Err(reason) = target.check_values(&values).await {
         return Ok(json_error(&id, &reason));
     }
-    let secrets = secret_values(target.template, &values);
+    let server = match target.resolved_server().await {
+        Ok(server) => server,
+        Err(reason) => return Ok(json_error(&id, &reason)),
+    };
+    let secrets = secret_values(&target.template, &values);
 
     let started = target
         .state
@@ -74,9 +78,9 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
             user_id: target.auth.user_id,
             instance_id: target.instance.id,
             runtime: target.template.runtime,
-            server: target.resolved_server()?,
+            server: &server,
             args: &target.template.bin_args,
-            env: declared_process_env(target.template, values),
+            env: declared_process_env(&target.template, values),
             secrets,
         })
         .await;

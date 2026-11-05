@@ -48,7 +48,26 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     let pool = db::connect(config.database.clone()).await?;
     db::migrate(&pool).await?;
 
-    let catalog = Catalog::load(&config.settings.paths.catalog)?;
+    let catalog_settings = &config.settings.catalog;
+    if catalog_settings.allow_custom_servers {
+        // Their code can read this process's environment and memory (SECURITY.md T11).
+        tracing::warn!(
+            "catalog.allow_custom_servers is on: every account can run any code as this hub's \
+             user, with access to the database credentials and every user's stored values"
+        );
+        if config.settings.server.signup != SignupMode::Disabled {
+            tracing::warn!(
+                "custom servers with sign-up open: anyone who signs up gets all of that access"
+            );
+        }
+    }
+    let catalog_path = &config.settings.paths.catalog;
+    // A single-user hub running only its own servers has no use for a catalog file.
+    let catalog = if catalog_settings.allow_custom_servers && !catalog_path.exists() {
+        Catalog::parse("")?
+    } else {
+        Catalog::load(catalog_path)?
+    };
     if !config.settings.catalog.require_lock {
         tracing::warn!(
             "catalog.require_lock is off: servers without a lock entry get whatever their \
@@ -73,6 +92,7 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
             .collect()
     };
     db::instances::sync_with_catalog(&pool, &ids(enabled), &ids(disabled)).await?;
+    db::instances::sync_custom_servers(&pool, catalog_settings.allow_custom_servers).await?;
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await

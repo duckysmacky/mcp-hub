@@ -97,7 +97,11 @@ async fn initialize(
         return Ok(json_error(&id, &reason));
     }
 
-    let secrets = secret_values(target.template, &values);
+    let server = match target.resolved_server().await {
+        Ok(server) => server,
+        Err(reason) => return Ok(json_error(&id, &reason)),
+    };
+    let secrets = secret_values(&target.template, &values);
     let already_running = target
         .state
         .supervisor
@@ -110,10 +114,10 @@ async fn initialize(
             user_id: target.auth.user_id,
             instance_id: target.instance.id,
             runtime: target.template.runtime,
-            server: target.resolved_server()?,
+            server: &server,
             args: &target.template.bin_args,
             http,
-            env: declared_process_env(target.template, values),
+            env: declared_process_env(&target.template, values),
             secrets,
         })
         .await;
@@ -215,7 +219,7 @@ fn request_timeout(target: &Target<'_>) -> Duration {
     Duration::from_secs(target.state.config.settings.limits.request_timeout_secs)
 }
 
-fn http_settings<'a>(target: &Target<'a>) -> Result<&'a HttpSettings, McpError> {
+fn http_settings<'t>(target: &'t Target<'_>) -> Result<&'t HttpSettings, McpError> {
     target.template.http.as_ref().ok_or(McpError::NotFound)
 }
 

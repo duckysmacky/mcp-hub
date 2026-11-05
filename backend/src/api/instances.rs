@@ -1,6 +1,9 @@
 //! Instance management. Env values are write-only: no response ever contains one.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap, HashSet},
+};
 
 use axum::{
     Json, Router,
@@ -17,7 +20,9 @@ use crate::{
     app_state::AppState,
     audit,
     auth::CurrentSession,
-    catalog::{EnvSpec, RuntimeKind, ServerMode, ServerTemplate},
+    catalog::{
+        CUSTOM_SERVER_ID, CustomServer, EnvSpec, RuntimeKind, ServerMode, ServerTemplate, install,
+    },
     crypto, db,
     db::instances::{Instance, is_valid_slug},
     error::ApiError,
@@ -27,10 +32,12 @@ use crate::{
 const MAX_ENV_VALUE_BYTES: usize = 64 * 1024;
 const MAX_DISABLED_TOOLS: usize = 1000;
 const MAX_TOOL_NAME_BYTES: usize = 1024;
+const CUSTOM_SERVERS_OFF: &str = "the operator has turned custom servers off";
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/catalog", get(list_catalog))
+        .route("/catalog/settings", get(catalog_settings))
         .route("/instances", get(list_instances).post(create_instance))
         .route(
             "/instances/{id}",
@@ -78,6 +85,20 @@ async fn list_catalog(
 }
 
 #[derive(Serialize)]
+struct CatalogSettingsResponse {
+    custom_servers: bool,
+}
+
+async fn catalog_settings(
+    State(state): State<AppState>,
+    _session: CurrentSession,
+) -> Json<CatalogSettingsResponse> {
+    Json(CatalogSettingsResponse {
+        custom_servers: state.config.settings.catalog.allow_custom_servers,
+    })
+}
+
+#[derive(Serialize)]
 struct EnvStatus {
     var: String,
     is_set: bool,
@@ -94,7 +115,7 @@ struct InstanceResponse {
     id: i64,
     slug: String,
     server_id: String,
-    /// Fixed by the catalog. `null` once the server has left it.
+    /// Fixed by the catalog or the custom definition. `null` once the server has left it.
     runtime: Option<RuntimeKind>,
     package: Option<String>,
     enabled: bool,
@@ -103,6 +124,8 @@ struct InstanceResponse {
     env: Vec<EnvStatus>,
     missing_required: Vec<String>,
     disabled_tools: Vec<String>,
+    /// The owner's own definition. It holds no values: those are in `env`.
+    custom: Option<CustomServer>,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -144,7 +167,8 @@ async fn describe(
     session: &CurrentSession,
     instance: Instance,
 ) -> Result<InstanceResponse, ApiError> {
-    let template = state.catalog.get(&instance.server_id);
+    let template = state.template_for(&instance);
+    let template = template.as_deref();
     let mut readable = match template {
         Some(template) => readable_values(state, session, instance.id, template).await?,
         None => HashMap::new(),
@@ -180,6 +204,7 @@ async fn describe(
         env,
         missing_required,
         disabled_tools: instance.disabled_tools.0,
+        custom: instance.custom.map(|custom| custom.0),
         created_at: instance.created_at,
         updated_at: instance.updated_at,
     })
@@ -198,11 +223,14 @@ async fn owned_instance(
 fn template_of<'a>(
     state: &'a AppState,
     instance: &Instance,
-) -> Result<&'a ServerTemplate, ApiError> {
-    let template = state
-        .catalog
-        .get(&instance.server_id)
-        .ok_or_else(|| ApiError::Conflict("this server was removed from the catalog".to_owned()))?;
+) -> Result<Cow<'a, ServerTemplate>, ApiError> {
+    let template = state.template_for(instance).ok_or_else(|| {
+        ApiError::Conflict(if instance.custom.is_some() {
+            CUSTOM_SERVERS_OFF.to_owned()
+        } else {
+            "this server was removed from the catalog".to_owned()
+        })
+    })?;
     if !template.enabled {
         return Err(ApiError::Conflict(
             "the operator has turned this server off".to_owned(),
@@ -236,8 +264,20 @@ async fn list_instances(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateInstance {
-    server_id: String,
+    /// A catalog server, or `custom` for a definition of the user's own.
+    #[serde(default)]
+    server_id: Option<String>,
     slug: String,
+    #[serde(default)]
+    custom: Option<CustomServer>,
+}
+
+/// Checks a definition sent by a user, and that this hub accepts them at all.
+fn check_custom(state: &AppState, custom: &CustomServer) -> Result<(), ApiError> {
+    if !state.config.settings.catalog.allow_custom_servers {
+        return Err(ApiError::BadRequest(CUSTOM_SERVERS_OFF.to_owned()));
+    }
+    custom.validate().map_err(ApiError::BadRequest)
 }
 
 async fn create_instance(
@@ -246,13 +286,16 @@ async fn create_instance(
     Json(request): Json<CreateInstance>,
 ) -> Result<(StatusCode, Json<InstanceResponse>), ApiError> {
     validate_slug(&request.slug)?;
-    if !state
-        .catalog
-        .get(&request.server_id)
-        .is_some_and(|server| server.enabled)
-    {
-        return Err(ApiError::BadRequest("unknown server".to_owned()));
-    }
+    let server_id = match (&request.server_id, &request.custom) {
+        (Some(id), None) if state.catalog.get(id).is_some_and(|server| server.enabled) => {
+            id.as_str()
+        }
+        (None, Some(custom)) => {
+            check_custom(&state, custom)?;
+            CUSTOM_SERVER_ID
+        }
+        _ => return Err(ApiError::BadRequest("unknown server".to_owned())),
+    };
     // ponytail: two concurrent creates can pass this together. It bounds abuse, not exactly.
     let max_instances = state.config.settings.limits.max_instances_per_user;
     if db::instances::count(&state.pool, session.user_id).await? >= max_instances {
@@ -264,10 +307,20 @@ async fn create_instance(
         &state.pool,
         session.user_id,
         &request.slug,
-        &request.server_id,
+        server_id,
+        request.custom.as_ref(),
     )
     .await?;
-    let detail = json!({ "server_id": instance.server_id, "slug": instance.slug });
+    let mut detail = json!({ "server_id": instance.server_id, "slug": instance.slug });
+    if let Some(custom) = &request.custom {
+        // Installed after the insert, as its directory is named after the instance id.
+        if let Err(error) = state.install_custom(&custom.to_template(instance.id)).await {
+            db::instances::delete(&state.pool, session.user_id, instance.id).await?;
+            return Err(ApiError::BadRequest(error.to_string()));
+        }
+        detail["custom"] = json!(true);
+        detail["package"] = json!(custom.package);
+    }
     audit::record(
         &state.pool,
         Some(session.user_id),
@@ -296,6 +349,8 @@ async fn get_instance(
 struct UpdateInstance {
     slug: Option<String>,
     disabled_tools: Option<Vec<String>>,
+    /// Only on a custom instance.
+    custom: Option<CustomServer>,
 }
 
 async fn update_instance(
@@ -318,6 +373,9 @@ async fn update_instance(
             ));
         }
     }
+    if let Some(custom) = &request.custom {
+        update_custom(&state, &session, id, custom).await?;
+    }
     let instance = db::instances::update(
         &state.pool,
         session.user_id,
@@ -335,6 +393,40 @@ async fn update_instance(
     Ok(Json(describe(&state, &session, instance).await?))
 }
 
+/// Replaces a definition. Running processes read the files being replaced, so they stop first,
+/// and a failed install keeps the old definition, which installs again when next needed.
+async fn update_custom(
+    state: &AppState,
+    session: &CurrentSession,
+    id: i64,
+    custom: &CustomServer,
+) -> Result<(), ApiError> {
+    let instance = owned_instance(state, session, id).await?;
+    let Some(current) = &instance.custom else {
+        return Err(ApiError::BadRequest(
+            "only a custom instance has a definition to change".to_owned(),
+        ));
+    };
+    check_custom(state, custom)?;
+    state.supervisor.stop_instance(id);
+    if current.0.runtime != custom.runtime || current.0.package != custom.package {
+        state
+            .install_custom(&custom.to_template(id))
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    }
+    db::instances::update_custom(&state.pool, session.user_id, id, custom).await?;
+    audit::record(
+        &state.pool,
+        Some(session.user_id),
+        Some(id),
+        "custom_server_updated",
+        Some(json!({ "package": custom.package })),
+    )
+    .await;
+    Ok(())
+}
+
 async fn delete_instance(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -344,6 +436,9 @@ async fn delete_instance(
         return Err(ApiError::NotFound);
     }
     state.supervisor.forget_instance(id);
+    if let Err(error) = install::remove_custom(id, &state.config.settings).await {
+        tracing::warn!(%error, instance_id = id, "could not remove a custom server's files");
+    }
     let detail = json!({ "instance_id": id });
     audit::record(
         &state.pool,
@@ -494,7 +589,8 @@ async fn instance_status(
 ) -> Result<Json<StatusResponse>, ApiError> {
     let instance = owned_instance(&state, &session, id).await?;
     let status = state.supervisor.instance_status(id);
-    let template = state.catalog.get(&instance.server_id);
+    let template = state.template_for(&instance);
+    let template = template.as_deref();
     Ok(Json(StatusResponse {
         enabled: instance.enabled,
         mode: template.map(|server| server.mode),

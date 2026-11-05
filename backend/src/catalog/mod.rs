@@ -23,6 +23,16 @@ const DENIED_ENV_PREFIXES: [&str; 8] = [
 ];
 const DENIED_ENV_NAMES: [&str; 7] = ["PATH", "HOME", "SHELL", "TMPDIR", "IFS", "ENV", "BASH_ENV"];
 
+/// The `server_id` of an instance that holds its own definition. No catalog entry can use it.
+pub const CUSTOM_SERVER_ID: &str = "custom";
+
+const MAX_CUSTOM_PACKAGE_BYTES: usize = 512;
+const MAX_CUSTOM_ARGS: usize = 64;
+const MAX_CUSTOM_TEXT_BYTES: usize = 4096;
+const MAX_CUSTOM_ENV_VARS: usize = 100;
+const MAX_CUSTOM_DESCRIPTION_BYTES: usize = 1024;
+const MAX_CUSTOM_HEADERS: usize = 32;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
     #[error("reading catalog {path}: {source}")]
@@ -60,7 +70,7 @@ impl RuntimeKind {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpSettings {
     pub port_env: String,
@@ -190,6 +200,82 @@ impl ServerTemplate {
     }
 }
 
+/// A user's own server, stored on their instance. Held to the catalog's rules, plus bounds
+/// because it comes from a request. Holds no env values: those stay encrypted in `instance_env`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomServer {
+    pub mode: ServerMode,
+    pub runtime: RuntimeKind,
+    pub package: String,
+    #[serde(default)]
+    pub bin: Option<String>,
+    #[serde(default)]
+    pub bin_args: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<EnvSpec>,
+    #[serde(default)]
+    pub http: Option<HttpSettings>,
+}
+
+impl CustomServer {
+    /// The instance id doubles as the server id, so each one installs into its own directory.
+    pub fn to_template(&self, instance_id: i64) -> ServerTemplate {
+        ServerTemplate {
+            id: instance_id.to_string(),
+            enabled: true,
+            mode: self.mode,
+            runtime: self.runtime,
+            package: self.package.clone(),
+            bin: self.bin.clone(),
+            bin_args: self.bin_args.clone(),
+            env: self.env.clone(),
+            http: self.http.clone(),
+        }
+    }
+
+    /// The message is for the client, and describes the definition it just sent.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.package.len() > MAX_CUSTOM_PACKAGE_BYTES {
+            return Err("package is too long".to_owned());
+        }
+        if self.bin_args.len() > MAX_CUSTOM_ARGS {
+            return Err(format!("at most {MAX_CUSTOM_ARGS} arguments are allowed"));
+        }
+        // A NUL can't exist in an argument, so the child could never be spawned.
+        if self
+            .bin_args
+            .iter()
+            .any(|arg| arg.len() > MAX_CUSTOM_TEXT_BYTES || arg.contains('\0'))
+        {
+            return Err("an argument is too long or contains a NUL byte".to_owned());
+        }
+        if self.env.len() > MAX_CUSTOM_ENV_VARS {
+            return Err(format!(
+                "at most {MAX_CUSTOM_ENV_VARS} environment variables are allowed"
+            ));
+        }
+        if self
+            .env
+            .iter()
+            .any(|spec| spec.description.len() > MAX_CUSTOM_DESCRIPTION_BYTES)
+        {
+            return Err("a variable's description is too long".to_owned());
+        }
+        if let Some(http) = &self.http {
+            let too_long = http.path.len() > MAX_CUSTOM_TEXT_BYTES
+                || http
+                    .headers
+                    .values()
+                    .any(|template| template.len() > MAX_CUSTOM_TEXT_BYTES);
+            if too_long || http.headers.len() > MAX_CUSTOM_HEADERS {
+                return Err("the http settings are too long".to_owned());
+            }
+        }
+        validate_server(&self.to_template(0))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CatalogFile {
@@ -242,6 +328,9 @@ impl Catalog {
 fn validate_server(server: &ServerTemplate) -> Result<(), String> {
     if !is_valid_server_id(&server.id) {
         return Err("id must match ^[a-z0-9][a-z0-9-]{0,31}$".to_owned());
+    }
+    if server.id == CUSTOM_SERVER_ID {
+        return Err(format!("id {CUSTOM_SERVER_ID} is reserved"));
     }
     if server.runtime == RuntimeKind::Binary {
         validate_binary_package(server)?;
@@ -889,6 +978,59 @@ mod tests {
             env_vars = ["A"]
         "#;
         assert!(Catalog::parse(old).is_err());
+    }
+
+    fn custom_server(package: &str) -> CustomServer {
+        CustomServer {
+            mode: ServerMode::Stdio,
+            runtime: RuntimeKind::Bun,
+            package: package.to_owned(),
+            bin: None,
+            bin_args: Vec::new(),
+            env: Vec::new(),
+            http: None,
+        }
+    }
+
+    #[test]
+    fn custom_servers_follow_the_catalog_rules() {
+        assert!(custom_server("demo@1.2.3").validate().is_ok());
+        assert_eq!(custom_server("demo@1.2.3").to_template(42).id, "42");
+        for package in ["demo", "demo@latest", "git+https://example.com/a.git"] {
+            assert!(custom_server(package).validate().is_err(), "{package}");
+        }
+
+        let mut denied = custom_server("demo@1.2.3");
+        denied.env = serde_json::from_str(r#"[{ "name": "LD_PRELOAD" }]"#).unwrap();
+        assert!(denied.validate().is_err());
+
+        let mut wrong_mode = custom_server("demo@1.2.3");
+        wrong_mode.mode = ServerMode::Http;
+        assert!(wrong_mode.validate().is_err());
+    }
+
+    #[test]
+    fn custom_servers_are_bounded() {
+        let mut long_package = custom_server("demo@1.2.3");
+        long_package.package = format!("{}@1.2.3", "a".repeat(MAX_CUSTOM_PACKAGE_BYTES));
+        assert!(long_package.validate().is_err());
+
+        let mut many_args = custom_server("demo@1.2.3");
+        many_args.bin_args = vec!["x".to_owned(); MAX_CUSTOM_ARGS + 1];
+        assert!(many_args.validate().is_err());
+
+        let mut long_arg = custom_server("demo@1.2.3");
+        long_arg.bin_args = vec!["x".repeat(MAX_CUSTOM_TEXT_BYTES + 1)];
+        assert!(long_arg.validate().is_err());
+
+        let mut nul_arg = custom_server("demo@1.2.3");
+        nul_arg.bin_args = vec!["a\0b".to_owned()];
+        assert!(nul_arg.validate().is_err());
+    }
+
+    #[test]
+    fn the_custom_id_is_reserved() {
+        assert!(Catalog::parse(&STDIO.replace("taiga-password", CUSTOM_SERVER_ID)).is_err());
     }
 
     #[test]

@@ -141,11 +141,19 @@ pub struct ServerSettings {
 pub struct CatalogSettings {
     /// Refuse to start unless `catalog.lock` covers every enabled server.
     pub require_lock: bool,
+    /// Lets every account define and run its own servers: code of their choice under the
+    /// hub's UID. Only for hubs whose users are all trusted like the operator (SECURITY.md T11).
+    pub allow_custom_servers: bool,
+    pub custom_install_timeout_secs: u64,
 }
 
 impl Default for CatalogSettings {
     fn default() -> Self {
-        Self { require_lock: true }
+        Self {
+            require_lock: true,
+            allow_custom_servers: false,
+            custom_install_timeout_secs: 300,
+        }
     }
 }
 
@@ -530,6 +538,11 @@ mod tests {
         let settings: Settings = toml::from_str("[catalog]\nrequire_lock = false").unwrap();
         assert!(!settings.catalog.require_lock);
         assert!(toml::from_str::<Settings>("[catalog]\nnonsense = true").is_err());
+    }
+
+    #[test]
+    fn custom_servers_are_off_by_default() {
+        assert!(!Settings::default().catalog.allow_custom_servers);
     }
 
     #[test]

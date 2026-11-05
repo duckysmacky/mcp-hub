@@ -31,6 +31,20 @@ export interface CatalogServer {
 	env: EnvSpec[];
 }
 
+export interface CustomServer {
+	mode: ServerMode;
+	runtime: Runtime;
+	package: string;
+	bin: string | null;
+	bin_args: string[];
+	env: EnvSpec[];
+	http: { port_env: string; path: string; headers: Record<string, string> } | null;
+}
+
+export interface CatalogSettings {
+	custom_servers: boolean;
+}
+
 export interface EnvStatus {
 	var: string;
 	is_set: boolean;
@@ -52,6 +66,8 @@ export interface Instance {
 	env: EnvStatus[];
 	missing_required: string[];
 	disabled_tools: string[];
+	/** Set only on the owner's custom instance. */
+	custom: CustomServer | null;
 	created_at: string;
 	updated_at: string;
 }

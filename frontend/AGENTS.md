@@ -51,7 +51,7 @@ frontend/src/
     ├── +layout.svelte / +layout.ts   # styles, ssr = false, auth guard
     ├── (app)/                        # signed-in pages, inside the nav
     │   ├── instances/                # list
-    │   ├── instances/new/            # pick server -> slug
+    │   ├── instances/new/            # pick server or define a custom one -> slug
     │   ├── instances/[id]/           # env, start/stop/restart, status, tool filter, settings, connection URL
     │   ├── clients/                  # connected clients (grants), revoke
     │   └── settings/                 # change password, theme, language
@@ -93,6 +93,7 @@ If the user isn't logged in, send them to `/login?next=/consent?request=...` and
 - Always show the connection URL `<public_url>/mcp/<slug>` with a copy button. How to add it to each client (`lib/clients.ts`) sits in a collapsed section, with one expandable entry per client, so it doesn't clutter the page. Check a client's own docs before adding or changing its guide.
 - Status comes from `/api/instances/{id}/status`: enabled/disabled, live process count, last exit, recent stderr (already redacted by the backend). Poll gently (every 5 s while the page is visible), and don't poll in background tabs. Unsaved form edits must survive a poll.
 - Start / Stop / Restart map to enable / disable (kills sessions) / kill all sessions. Ask for confirmation before Stop and Restart, because they drop live agent connections. The same goes for renaming, which stops running processes too.
+- A custom instance also has an editable definition panel (`CustomServerPanel`). Saving asks for confirmation, because it stops running processes.
 - The tool filter saves on click, needs no restart, and is empty until a connected client has listed tools.
 
 ### Connected clients

@@ -6,6 +6,10 @@ signup = "disabled"  # enabled, disabled, invite-only
 
 [catalog]
 require_lock = true  # false: start without a catalog.lock, resolving what it doesn't cover
+# true: every account can define and run ANY code as the hub's user, reaching the database
+# credentials and all users' stored values. Only for hubs whose users you trust like yourself.
+allow_custom_servers = false
+custom_install_timeout_secs = 300
 
 [paths]
 catalog  = "/etc/mcp-hub/catalog.toml"   # catalog.lock sits next to it

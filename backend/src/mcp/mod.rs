@@ -5,6 +5,8 @@ mod auth;
 mod http;
 mod stdio;
 
+use std::borrow::Cow;
+
 use axum::{
     Json, Router,
     body::Bytes,
@@ -152,7 +154,7 @@ struct Target<'a> {
     state: &'a AppState,
     auth: Authenticated,
     instance: Instance,
-    template: &'a ServerTemplate,
+    template: Cow<'a, ServerTemplate>,
 }
 
 async fn resolve<'a>(
@@ -166,10 +168,7 @@ async fn resolve<'a>(
         .await?
         .filter(|instance| instance.enabled && instance.slug == slug)
         .ok_or(McpError::NotFound)?;
-    let template = state
-        .catalog
-        .get(&instance.server_id)
-        .ok_or(McpError::NotFound)?;
+    let template = state.template_for(&instance).ok_or(McpError::NotFound)?;
     Ok(Target {
         state,
         auth,
@@ -224,11 +223,21 @@ impl Target<'_> {
         Ok(())
     }
 
-    fn resolved_server(&self) -> Result<&ResolvedServer, McpError> {
+    /// What to run. A custom server installs now if it has to, so the error is for the client,
+    /// who is that server's owner: it says why their package can't be installed.
+    async fn resolved_server(&self) -> Result<ResolvedServer, String> {
+        if self.instance.custom.is_some() {
+            return self
+                .state
+                .resolved_custom(&self.template)
+                .await
+                .map_err(|error| error.to_string());
+        }
         self.state
             .bin_scripts
             .get(&self.template.id)
-            .ok_or(McpError::NotFound)
+            .cloned()
+            .ok_or_else(|| "this server is not installed".to_owned())
     }
 }
 

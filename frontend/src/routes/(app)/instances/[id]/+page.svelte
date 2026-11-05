@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { api, messageOf } from '#lib/api/client.ts';
-	import type { InstanceStatus, ToolStatus } from '#lib/api/types.ts';
+	import type { CustomServer, InstanceStatus, ToolStatus } from '#lib/api/types.ts';
 	import Banner from '#lib/components/Banner.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import ClientGuides from '#lib/components/ClientGuides.svelte';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import CustomServerPanel from '#lib/components/CustomServerPanel.svelte';
 	import EnvVars from '#lib/components/EnvVars.svelte';
 	import LogPanel from '#lib/components/LogPanel.svelte';
 	import SlugField from '#lib/components/SlugField.svelte';
@@ -20,7 +21,7 @@
 
 	const STATUS_POLL_MS = 5000;
 
-	type Action = 'start' | 'stop' | 'restart' | 'delete' | 'rename';
+	type Action = 'start' | 'stop' | 'restart' | 'delete' | 'rename' | 'definition';
 	type Confirmation = {
 		name: Action;
 		title: string;
@@ -41,7 +42,9 @@
 	const label = $derived(statusLabel(status, instance.missing_required));
 	const lastFailure = $derived(failedExit(status));
 	const cannotStart = $derived(
-		instance.needs_attention === 'server_removed' || instance.needs_attention === 'server_disabled'
+		instance.needs_attention === 'server_removed' ||
+			instance.needs_attention === 'server_disabled' ||
+			instance.needs_attention === 'custom_disabled'
 	);
 
 	let tools = $derived<ToolStatus[]>(data.tools);
@@ -136,6 +139,20 @@
 		}
 	}
 
+	function askToSaveDefinition(custom: CustomServer) {
+		confirmation = {
+			name: 'definition',
+			title: i18n.t.custom.saveTitle,
+			detail: `${liveNote}${i18n.t.custom.saveDetail}`,
+			action: i18n.t.custom.save,
+			variant: 'secondary',
+			run: async () => {
+				await api.patch(path, { custom });
+				toasts.show('ok', i18n.t.custom.saved);
+			}
+		};
+	}
+
 	function askToRename(event: SubmitEvent) {
 		event.preventDefault();
 		confirmation = {
@@ -163,7 +180,7 @@
 		<span class="cb-label">{t.label}</span>
 		<h1 class="cb-page-title">{instance.slug}</h1>
 		<div class="cb-meta">
-			<span>{t.metaCatalog(instance.server_id)}</span>
+			<span>{instance.custom ? t.metaCustom : t.metaCatalog(instance.server_id)}</span>
 			{#if status.mode}
 				<span class="cb-meta-sep">|</span>
 				<span>{t.metaMode(status.mode)}</span>
@@ -203,6 +220,11 @@
 		<strong>{t.serverDisabledLead}</strong>
 		{t.serverDisabledBody}
 	</Banner>
+{:else if instance.needs_attention === 'custom_disabled'}
+	<Banner tone="warn" tag={t.needsAttention}>
+		<strong>{t.customDisabledLead}</strong>
+		{t.customDisabledBody}
+	</Banner>
 {:else if instance.needs_attention === 'secrets_reset'}
 	<Banner tone="warn" tag={t.needsAttention}>
 		<strong>{t.secretsResetLead}</strong>
@@ -230,17 +252,27 @@
 			<ClientGuides slug={instance.slug} url={instance.url} />
 		</section>
 
-		{#if server || instance.env.length > 0}
+		{#if server || instance.custom || instance.env.length > 0}
 			<EnvVars
 				instanceId={instance.id}
 				slug={instance.slug}
 				env={instance.env}
-				specs={server?.env ?? []}
+				specs={instance.custom?.env ?? server?.env ?? []}
 				missingRequired={instance.missing_required}
 				liveProcesses={status.live_processes}
 				onchange={invalidateAll}
 				onrestart={askToRestart}
 			/>
+		{/if}
+
+		{#if instance.custom && !cannotStart}
+			{#key JSON.stringify(instance.custom)}
+				<CustomServerPanel
+					custom={instance.custom}
+					busy={pendingAction === 'definition'}
+					onsave={askToSaveDefinition}
+				/>
+			{/key}
 		{/if}
 
 		<ToolFilter instanceId={instance.id} {tools} />

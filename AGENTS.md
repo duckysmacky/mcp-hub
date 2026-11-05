@@ -53,7 +53,7 @@ If a `.context/<work-item>/` folder exists for your current task, read it as wel
 
 Never break these. Details and reasoning are in `.context/SECURITY.md`.
 
-1. **Users never supply commands, arguments, or packages.** Only catalog entries run, and only from packages pre-installed at pinned versions. No `npx`/`bunx` when a process starts.
+1. **Users never supply commands, arguments, or packages**, unless the operator opts in with `[catalog] allow_custom_servers` (off by default; see SECURITY.md T11). Otherwise only catalog entries run. Either way, only packages pre-installed at pinned versions run, and there is no `npx`/`bunx` when a process starts.
 2. **A child process gets only the env keys its catalog entry allows**, after `env_clear()`. The gateway sets `PATH`/`HOME` itself. Never build a shell string; always use argv.
 3. **Every MCP request is resolved through the token's user.** A session id, slug, or instance id from the request is never enough on its own: ownership is checked against the authenticated user on every request.
 4. **Secrets are write-only.** No API returns a secret value. Secrets are never logged, never put in error messages, and never sent to the frontend.
@@ -104,7 +104,8 @@ Before calling a task done, run fmt, clippy, and tests for every domain you touc
 | **Catalog lock** | `catalog.lock`, committed next to the catalog: every enabled server's frozen dependency tree. The hub won't start without a matching one |
 | **Secret var** | An env var with `secret = true` (the default): write-only through the API. All values are encrypted either way |
 | **Template / catalog entry** | One `[[server]]` in the catalog |
-| **Instance** | A user's configured copy of a catalog server: slug, encrypted env values, disabled tools, enabled flag |
+| **Instance** | A user's configured copy of a catalog server or of their own custom server: slug, encrypted env values, disabled tools, enabled flag |
+| **Custom server** | A server definition a user writes themselves, stored on their instance. Only on hubs with `allow_custom_servers` |
 | **Slug** | URL segment of an instance. Unique **per user**, not globally; several users may each have `/mcp/taiga` |
 | **Session** | One MCP session (`Mcp-Session-Id`); until v3 each session owns one child process |
 | **Grant** | A user's OAuth approval for one client and one instance; shown in the UI and revocable |

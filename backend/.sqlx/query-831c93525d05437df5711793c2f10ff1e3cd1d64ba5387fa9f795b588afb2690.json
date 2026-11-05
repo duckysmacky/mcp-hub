@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE instances\n           SET slug = COALESCE($3, slug),\n               disabled_tools = COALESCE($4, disabled_tools),\n               updated_at = now()\n           WHERE id = $1 AND user_id = $2\n           RETURNING id, user_id, slug, server_id, enabled, needs_attention,\n                     disabled_tools AS \"disabled_tools: Json<Vec<String>>\",\n                     created_at, updated_at",
+  "query": "INSERT INTO instances (user_id, slug, server_id, custom)\n           VALUES ($1, $2, $3, $4)\n           RETURNING id, user_id, slug, server_id, enabled, needs_attention,\n                     disabled_tools AS \"disabled_tools: Json<Vec<String>>\",\n                  custom AS \"custom?: Json<CustomServer>\",\n                     created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,17 @@
       },
       {
         "ordinal": 7,
+        "name": "custom?: Json<CustomServer>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "custom"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -106,7 +117,7 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Int8",
+        "Text",
         "Text",
         "Jsonb"
       ]
@@ -119,9 +130,10 @@
       false,
       true,
       false,
+      true,
       false,
       false
     ]
   },
-  "hash": "d527daf0e6ceae78a4d78e9685b5b419b88b3b29eac3986766b6e169434c14c7"
+  "hash": "831c93525d05437df5711793c2f10ff1e3cd1d64ba5387fa9f795b588afb2690"
 }

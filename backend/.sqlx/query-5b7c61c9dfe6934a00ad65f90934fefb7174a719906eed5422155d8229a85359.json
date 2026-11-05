@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE instances SET needs_attention = NULL, updated_at = now()\n             WHERE custom IS NOT NULL AND needs_attention = 'custom_disabled'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "5b7c61c9dfe6934a00ad65f90934fefb7174a719906eed5422155d8229a85359"
+}
