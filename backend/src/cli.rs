@@ -13,6 +13,11 @@ use zeroize::Zeroizing;
 
 use crate::{
     audit, auth,
+    catalog::{
+        Catalog,
+        install::{generate_lock, reinstall_server},
+        lock::CatalogLock,
+    },
     config::Config,
     crypto::{self, Dek, KdfParams, Token, WrapKind},
     db,
@@ -28,7 +33,9 @@ commands:
   user disable <username>         log a user out everywhere and revoke their grants
   user enable <username>
   user reset-password <username> [--yes]
-                                  wipes that user's stored values and grants";
+                                  wipes that user's stored values and grants
+  catalog lock [--output <path>]  resolve and record every enabled server's dependencies
+  catalog reinstall [<server-id>] reinstall from the lockfile, stopping running processes";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -37,6 +44,8 @@ pub enum Command {
     UserDisable(String),
     UserEnable(String),
     UserResetPassword { username: String, confirmed: bool },
+    CatalogLock { output: Option<PathBuf> },
+    CatalogReinstall { server_id: Option<String> },
 }
 
 /// Parses arguments into the settings path and the command to run.
@@ -60,6 +69,14 @@ pub fn parse(args: &[String]) -> anyhow::Result<(Option<PathBuf>, Command)> {
             username: (*username).to_owned(),
             confirmed: true,
         },
+        ["catalog", "lock"] => Command::CatalogLock { output: None },
+        ["catalog", "lock", "--output", path] => Command::CatalogLock {
+            output: Some(PathBuf::from(path)),
+        },
+        ["catalog", "reinstall"] => Command::CatalogReinstall { server_id: None },
+        ["catalog", "reinstall", server_id] => Command::CatalogReinstall {
+            server_id: Some((*server_id).to_owned()),
+        },
         _ => bail!("{USAGE}"),
     };
     Ok((settings, command))
@@ -67,10 +84,19 @@ pub fn parse(args: &[String]) -> anyhow::Result<(Option<PathBuf>, Command)> {
 
 /// Runs an operator command. Results go to stdout, logs to stderr.
 pub async fn run(command: Command, config: &Config) -> anyhow::Result<()> {
+    // Locking is done ahead of deploying, so it must not need the database.
+    if let Command::CatalogLock { output } = command {
+        return lock_catalog(config, output).await;
+    }
     let pool = db::connect(config.database.clone()).await?;
     db::migrate(&pool).await?;
     match command {
-        Command::Serve => bail!("serving is not an operator command"),
+        Command::Serve | Command::CatalogLock { .. } => {
+            bail!("not an operator command that needs the database")
+        }
+        Command::CatalogReinstall { server_id } => {
+            reinstall_catalog(&pool, config, server_id.as_deref()).await?;
+        }
         Command::UserList => {
             for user in db::users::list(&pool).await? {
                 let status = match user.disabled_at {
@@ -105,6 +131,50 @@ pub async fn run(command: Command, config: &Config) -> anyhow::Result<()> {
             println!("new password for {username}: {}", password.as_str());
             println!("it is not shown again");
         }
+    }
+    Ok(())
+}
+
+async fn lock_catalog(config: &Config, output: Option<PathBuf>) -> anyhow::Result<()> {
+    let paths = &config.settings.paths;
+    let catalog = Catalog::load(&paths.catalog)?;
+    let work_dir = paths.scratch.join("catalog-lock");
+    let lock = generate_lock(
+        &catalog,
+        &paths.packages,
+        &work_dir,
+        &config.settings.runtimes,
+    )
+    .await?;
+    let path = output.unwrap_or_else(|| CatalogLock::path_for(&paths.catalog));
+    let text = toml::to_string_pretty(&lock).context("serializing the lockfile")?;
+    std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+    println!("wrote {}; commit it next to the catalog", path.display());
+    Ok(())
+}
+
+async fn reinstall_catalog(
+    pool: &PgPool,
+    config: &Config,
+    server_id: Option<&str>,
+) -> anyhow::Result<()> {
+    let paths = &config.settings.paths;
+    let catalog = Catalog::load(&paths.catalog)?;
+    let lock = CatalogLock::load_verified(&catalog, &CatalogLock::path_for(&paths.catalog))?;
+    if let Some(server_id) = server_id
+        && !catalog.get(server_id).is_some_and(|server| server.enabled)
+    {
+        bail!("no enabled server named {server_id}");
+    }
+    let servers = catalog
+        .servers()
+        .filter(|server| server.enabled)
+        .filter(|server| server_id.is_none_or(|wanted| wanted == server.id));
+    for server in servers {
+        // Stopped first: running processes read their files from the directory being replaced.
+        notify_stop(pool, &format!("server:{}", server.id)).await?;
+        reinstall_server(server, &lock, &paths.packages, &config.settings.runtimes).await?;
+        println!("reinstalled {}", server.id);
     }
     Ok(())
 }

@@ -4,7 +4,7 @@ use anyhow::Context;
 use mcp_hub::{
     app_state::AppState,
     build_router,
-    catalog::{Catalog, ServerTemplate, install::install_all},
+    catalog::{Catalog, ServerTemplate, install::install_all, lock::CatalogLock},
     cli::{self, Command},
     config::{Config, Settings},
     db,
@@ -40,8 +40,13 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     db::migrate(&pool).await?;
 
     let catalog = Catalog::load(&config.settings.paths.catalog)?;
+    let lock = CatalogLock::load_verified(
+        &catalog,
+        &CatalogLock::path_for(&config.settings.paths.catalog),
+    )?;
     let bin_scripts = install_all(
         &catalog,
+        &lock,
         &config.settings.paths.packages,
         &config.settings.runtimes,
     )

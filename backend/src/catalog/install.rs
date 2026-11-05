@@ -9,13 +9,18 @@ use std::{
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use super::{Catalog, RuntimeKind, ServerTemplate};
+use super::{
+    Catalog, RuntimeKind, ServerTemplate,
+    lock::{CatalogLock, LockedServer},
+};
 use crate::config::RuntimeSettings;
 
 /// A Python server's virtual environment, relative to its package directory.
 const UV_VENV: &str = ".venv";
 /// Where pip puts a Python server's packages, relative to its package directory.
 const PIP_TARGET: &str = "site";
+const BUN_LOCKFILE: &str = "bun.lock";
+const PYTHON_LOCKFILE: &str = "requirements.lock";
 
 /// What a server's processes run.
 #[derive(Clone, Debug)]
@@ -38,86 +43,265 @@ fn failed(server: &ServerTemplate, reason: impl Into<String>) -> InstallError {
     }
 }
 
-/// Installs every enabled server's package and returns what each one runs.
+/// Installs every enabled server's locked packages and returns what each one runs.
 pub async fn install_all(
     catalog: &Catalog,
+    lock: &CatalogLock,
     packages_dir: &Path,
     runtimes: &RuntimeSettings,
 ) -> Result<HashMap<String, ResolvedServer>, InstallError> {
     let mut resolved = HashMap::new();
     for server in catalog.servers().filter(|server| server.enabled) {
-        install_server(server, packages_dir, runtimes).await?;
+        install_server(server, lock, packages_dir, runtimes).await?;
         resolved.insert(server.id.clone(), resolve_server(server, packages_dir)?);
     }
     Ok(resolved)
 }
 
-async fn install_server(
+/// Removes a server's installed files and installs it again from the lockfile.
+pub async fn reinstall_server(
     server: &ServerTemplate,
+    lock: &CatalogLock,
     packages_dir: &Path,
     runtimes: &RuntimeSettings,
 ) -> Result<(), InstallError> {
-    let (name, version) = server.package_parts().map_err(|e| failed(server, e))?;
     let directory = packages_dir.join(&server.id);
-    tokio::fs::create_dir_all(&directory)
+    match tokio::fs::remove_dir_all(&directory).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(failed(
+                server,
+                format!("removing {}: {error}", directory.display()),
+            ));
+        }
+    }
+    install_server(server, lock, packages_dir, runtimes).await?;
+    resolve_server(server, packages_dir).map(|_| ())
+}
+
+async fn write_file(server: &ServerTemplate, path: &Path, text: &str) -> Result<(), InstallError> {
+    tokio::fs::write(path, text)
         .await
-        .map_err(|e| failed(server, format!("creating {}: {e}", directory.display())))?;
+        .map_err(|e| failed(server, format!("writing {}: {e}", path.display())))
+}
+
+async fn create_directory(server: &ServerTemplate, directory: &Path) -> Result<(), InstallError> {
+    tokio::fs::create_dir_all(directory)
+        .await
+        .map_err(|e| failed(server, format!("creating {}: {e}", directory.display())))
+}
+
+fn bun_manifest(server: &ServerTemplate) -> Result<String, InstallError> {
+    let (name, version) = server.package_parts().map_err(|e| failed(server, e))?;
+    Ok(json!({ "private": true, "dependencies": { name: version } }).to_string())
+}
+
+fn bun_command(runtimes: &RuntimeSettings, packages_dir: &Path, directory: &Path) -> Command {
+    let mut command = installer(&runtimes.bun, directory);
+    command.env("BUN_INSTALL_CACHE_DIR", packages_dir.join(".bun-cache"));
+    command
+}
+
+fn uv_command(runtimes: &RuntimeSettings, packages_dir: &Path, directory: &Path) -> Command {
+    let mut command = installer(&runtimes.uv, directory);
+    command
+        .env("UV_CACHE_DIR", packages_dir.join(".uv-cache"))
+        .env("UV_PYTHON_DOWNLOADS", "never");
+    command
+}
+
+fn pip_command(runtimes: &RuntimeSettings, packages_dir: &Path, directory: &Path) -> Command {
+    let mut command = installer(&runtimes.pip, directory);
+    command
+        .env("PIP_CACHE_DIR", packages_dir.join(".pip-cache"))
+        .args(["install", "--no-input", "--disable-pip-version-check"]);
+    command
+}
+
+/// Installs exactly what the lockfile lists. `--only-binary` is Python's
+/// `--ignore-scripts`: no package code runs at install.
+async fn install_server(
+    server: &ServerTemplate,
+    lock: &CatalogLock,
+    packages_dir: &Path,
+    runtimes: &RuntimeSettings,
+) -> Result<(), InstallError> {
+    let locked = lock
+        .get(&server.id)
+        .ok_or_else(|| failed(server, "not in the lockfile"))?;
+    let directory = packages_dir.join(&server.id);
+    create_directory(server, &directory).await?;
     tracing::info!(server = %server.id, package = %server.package, "installing package");
 
-    let requirement = format!("{name}=={version}");
-    // `--only-binary` is Python's `--ignore-scripts`: no package code runs at install.
     match server.runtime {
         RuntimeKind::Bun | RuntimeKind::Node => {
-            let manifest = json!({ "private": true, "dependencies": { name: version } });
-            tokio::fs::write(directory.join("package.json"), manifest.to_string())
-                .await
-                .map_err(|e| failed(server, format!("writing package.json: {e}")))?;
-            let mut command = installer(&runtimes.bun, &directory);
-            command
-                .args(["install", "--ignore-scripts"])
-                .env("BUN_INSTALL_CACHE_DIR", packages_dir.join(".bun-cache"));
-            run(server, command).await
+            write_file(
+                server,
+                &directory.join("package.json"),
+                &bun_manifest(server)?,
+            )
+            .await?;
+            write_file(server, &directory.join(BUN_LOCKFILE), &locked.lock).await?;
+            let mut command = bun_command(runtimes, packages_dir, &directory);
+            command.args(["install", "--frozen-lockfile", "--ignore-scripts"]);
+            run(server, command).await?;
         }
         RuntimeKind::Uv => {
-            let uv = |args: &[&str]| {
-                let mut command = installer(&runtimes.uv, &directory);
-                command
-                    .args(args)
-                    .env("UV_CACHE_DIR", packages_dir.join(".uv-cache"))
-                    .env("UV_PYTHON_DOWNLOADS", "never");
-                command
-            };
-            let venv_python = format!("{UV_VENV}/bin/python");
-            run(server, uv(&["venv", "--allow-existing", UV_VENV])).await?;
-            let install = [
+            write_file(server, &directory.join(PYTHON_LOCKFILE), &locked.lock).await?;
+            let mut venv = uv_command(runtimes, packages_dir, &directory);
+            venv.args(["venv", "--allow-existing", UV_VENV]);
+            run(server, venv).await?;
+            let mut install = uv_command(runtimes, packages_dir, &directory);
+            install.args([
                 "pip",
                 "install",
                 "--python",
-                &venv_python,
+                &format!("{UV_VENV}/bin/python"),
+                "--require-hashes",
                 "--only-binary",
                 ":all:",
-                &requirement,
-            ];
-            run(server, uv(&install)).await
+                "-r",
+                PYTHON_LOCKFILE,
+            ]);
+            run(server, install).await?;
         }
         RuntimeKind::Pip => {
-            let mut command = installer(&runtimes.pip, &directory);
-            command
-                .args([
-                    "install",
-                    "--target",
-                    PIP_TARGET,
-                    "--upgrade",
-                    "--only-binary",
-                    ":all:",
-                    "--no-input",
-                    "--disable-pip-version-check",
-                    &requirement,
-                ])
-                .env("PIP_CACHE_DIR", packages_dir.join(".pip-cache"));
-            run(server, command).await
+            write_file(server, &directory.join(PYTHON_LOCKFILE), &locked.lock).await?;
+            let mut command = pip_command(runtimes, packages_dir, &directory);
+            command.args([
+                "--target",
+                PIP_TARGET,
+                "--upgrade",
+                "--require-hashes",
+                "--only-binary",
+                ":all:",
+                "-r",
+                PYTHON_LOCKFILE,
+            ]);
+            run(server, command).await?;
         }
     }
+    Ok(())
+}
+
+/// Resolves every enabled server's dependencies from the registries, without installing
+/// them or running any package code. `work_dir` is removed afterwards.
+pub async fn generate_lock(
+    catalog: &Catalog,
+    packages_dir: &Path,
+    work_dir: &Path,
+    runtimes: &RuntimeSettings,
+) -> Result<CatalogLock, InstallError> {
+    let mut lock = CatalogLock::default();
+    for server in catalog.servers().filter(|server| server.enabled) {
+        tracing::info!(server = %server.id, package = %server.package, "locking package");
+        let directory = work_dir.join(&server.id);
+        create_directory(server, &directory).await?;
+        let text = lock_server(server, packages_dir, &directory, runtimes).await;
+        // A leftover directory is only clutter, so a failure to remove it isn't one.
+        let _ = tokio::fs::remove_dir_all(&directory).await;
+        lock.insert(
+            server.id.clone(),
+            LockedServer {
+                package: server.package.clone(),
+                runtime: server.runtime,
+                lock: text?,
+            },
+        );
+    }
+    Ok(lock)
+}
+
+async fn lock_server(
+    server: &ServerTemplate,
+    packages_dir: &Path,
+    directory: &Path,
+    runtimes: &RuntimeSettings,
+) -> Result<String, InstallError> {
+    let (name, version) = server.package_parts().map_err(|e| failed(server, e))?;
+    let requirement = format!("{name}=={version}");
+    match server.runtime {
+        RuntimeKind::Bun | RuntimeKind::Node => {
+            write_file(
+                server,
+                &directory.join("package.json"),
+                &bun_manifest(server)?,
+            )
+            .await?;
+            let mut command = bun_command(runtimes, packages_dir, directory);
+            command.args(["install", "--lockfile-only", "--ignore-scripts"]);
+            run(server, command).await?;
+            let path = directory.join(BUN_LOCKFILE);
+            tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|e| failed(server, format!("reading {}: {e}", path.display())))
+        }
+        RuntimeKind::Uv => {
+            write_file(
+                server,
+                &directory.join("requirements.in"),
+                &format!("{requirement}\n"),
+            )
+            .await?;
+            let mut command = uv_command(runtimes, packages_dir, directory);
+            command.args([
+                "pip",
+                "compile",
+                "requirements.in",
+                "--generate-hashes",
+                "--only-binary",
+                ":all:",
+                "--no-header",
+                "--no-annotate",
+                "--quiet",
+            ]);
+            utf8_output(server, run(server, command).await?)
+        }
+        RuntimeKind::Pip => {
+            let mut command = pip_command(runtimes, packages_dir, directory);
+            command.args([
+                "--dry-run",
+                "--ignore-installed",
+                "--target",
+                PIP_TARGET,
+                "--only-binary",
+                ":all:",
+                "--quiet",
+                "--report",
+                "-",
+                &requirement,
+            ]);
+            let report = run(server, command).await?;
+            pip_report_to_requirements(&report).map_err(|e| failed(server, e))
+        }
+    }
+}
+
+fn utf8_output(server: &ServerTemplate, output: Vec<u8>) -> Result<String, InstallError> {
+    String::from_utf8(output).map_err(|_| failed(server, "the tool's output isn't UTF-8"))
+}
+
+/// Turns a `pip install --report` into requirements with hashes, for `--require-hashes`.
+/// pip reports only the wheels for this platform, so lock on the deployment platform.
+fn pip_report_to_requirements(report: &[u8]) -> Result<String, String> {
+    let report: Value =
+        serde_json::from_slice(report).map_err(|e| format!("reading pip's report: {e}"))?;
+    let packages = report["install"]
+        .as_array()
+        .ok_or("pip's report lists no packages")?;
+    let mut lines = Vec::with_capacity(packages.len());
+    for package in packages {
+        let name = package["metadata"]["name"].as_str();
+        let version = package["metadata"]["version"].as_str();
+        let hash = package["download_info"]["archive_info"]["hashes"]["sha256"].as_str();
+        let (Some(name), Some(version), Some(hash)) = (name, version, hash) else {
+            return Err("pip's report has a package without a name, version or hash".to_owned());
+        };
+        lines.push(format!("{name}=={version} --hash=sha256:{hash}\n"));
+    }
+    lines.sort();
+    Ok(lines.concat())
 }
 
 /// A package tool's command: nothing from the hub's own environment reaches it.
@@ -132,7 +316,8 @@ fn installer(program: &Path, directory: &Path) -> Command {
     command
 }
 
-async fn run(server: &ServerTemplate, mut command: Command) -> Result<(), InstallError> {
+/// Runs a package tool and returns its stdout.
+async fn run(server: &ServerTemplate, mut command: Command) -> Result<Vec<u8>, InstallError> {
     let program = command.as_std().get_program().to_owned();
     let output = command
         .output()
@@ -148,7 +333,7 @@ async fn run(server: &ServerTemplate, mut command: Command) -> Result<(), Instal
             ),
         ));
     }
-    Ok(())
+    Ok(output.stdout)
 }
 
 /// Finds what an installed server runs.
@@ -337,8 +522,23 @@ mod tests {
         assert!(error.to_string().contains("outside the package"));
     }
 
+    fn lock_of(catalog: &Catalog, text: &str) -> CatalogLock {
+        let mut lock = CatalogLock::default();
+        for server in catalog.servers() {
+            lock.insert(
+                server.id.clone(),
+                LockedServer {
+                    package: server.package.clone(),
+                    runtime: server.runtime,
+                    lock: text.to_owned(),
+                },
+            );
+        }
+        lock
+    }
+
     #[tokio::test]
-    async fn installs_with_a_generated_manifest_and_no_scripts() {
+    async fn installs_frozen_from_the_lock_with_no_scripts() {
         let root = tempfile::tempdir().unwrap();
         // A fake bun: records its arguments, then "installs" the package.
         let fake_bun = root.path().join("fake-bun.sh");
@@ -354,13 +554,11 @@ touch node_modules/demo/cli.js
         );
 
         let packages = root.path().join("packages");
-        let resolved = install_all(
-            &catalog("demo@1.2.3", None),
-            &packages,
-            &runtimes_with(&fake_bun),
-        )
-        .await
-        .unwrap();
+        let catalog = catalog("demo@1.2.3", None);
+        let lock = lock_of(&catalog, "locked tree");
+        let resolved = install_all(&catalog, &lock, &packages, &runtimes_with(&fake_bun))
+            .await
+            .unwrap();
 
         let directory = packages.join("demo");
         assert!(
@@ -373,8 +571,12 @@ touch node_modules/demo/cli.js
             serde_json::from_str(&std::fs::read_to_string(directory.join("package.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest["dependencies"]["demo"], "1.2.3");
+        assert_eq!(
+            std::fs::read_to_string(directory.join("bun.lock")).unwrap(),
+            "locked tree"
+        );
         let args = std::fs::read_to_string(directory.join("args.txt")).unwrap();
-        assert_eq!(args.trim(), "install --ignore-scripts");
+        assert_eq!(args.trim(), "install --frozen-lockfile --ignore-scripts");
         let env = std::fs::read_to_string(directory.join("env.txt")).unwrap();
         assert!(!env.contains("DATABASE_URL"));
     }
@@ -394,7 +596,7 @@ touch node_modules/demo/cli.js
     }
 
     #[tokio::test]
-    async fn uv_installs_binaries_only_into_a_private_venv() {
+    async fn uv_installs_hashed_binaries_into_a_private_venv() {
         let root = tempfile::tempdir().unwrap();
         let fake_uv = root.path().join("fake-uv.sh");
         write_script(
@@ -407,21 +609,32 @@ touch .venv/bin/demo
 "#,
         );
         let packages = root.path().join("packages");
-        let resolved = install_all(&python_catalog("uv"), &packages, &runtimes_with(&fake_uv))
+        let catalog = python_catalog("uv");
+        let lock = lock_of(&catalog, "demo-pkg==1.2 --hash=sha256:abc\n");
+        let resolved = install_all(&catalog, &lock, &packages, &runtimes_with(&fake_uv))
             .await
             .unwrap();
 
         assert!(resolved["demo"].script.ends_with(".venv/bin/demo"));
         assert!(resolved["demo"].python_path.is_none());
-        let args = std::fs::read_to_string(packages.join("demo/args.txt")).unwrap();
+        let directory = packages.join("demo");
+        let args = std::fs::read_to_string(directory.join("args.txt")).unwrap();
         assert!(args.contains("venv --allow-existing .venv"), "{args}");
-        assert!(args.contains("--only-binary :all: demo-pkg==1.2"), "{args}");
-        let env = std::fs::read_to_string(packages.join("demo/env.txt")).unwrap();
+        assert!(
+            args.contains("--require-hashes --only-binary :all: -r requirements.lock"),
+            "{args}"
+        );
+        let env = std::fs::read_to_string(directory.join("env.txt")).unwrap();
         assert!(env.contains("UV_PYTHON_DOWNLOADS=never"));
+        assert!(
+            std::fs::read_to_string(directory.join("requirements.lock"))
+                .unwrap()
+                .contains("--hash=sha256:abc")
+        );
     }
 
     #[tokio::test]
-    async fn pip_installs_binaries_only_into_its_own_directory() {
+    async fn pip_installs_hashed_binaries_into_its_own_directory() {
         let root = tempfile::tempdir().unwrap();
         let fake_pip = root.path().join("fake-pip.sh");
         write_script(
@@ -433,7 +646,9 @@ touch site/bin/demo
 "#,
         );
         let packages = root.path().join("packages");
-        let resolved = install_all(&python_catalog("pip"), &packages, &runtimes_with(&fake_pip))
+        let catalog = python_catalog("pip");
+        let lock = lock_of(&catalog, "demo-pkg==1.2 --hash=sha256:abc\n");
+        let resolved = install_all(&catalog, &lock, &packages, &runtimes_with(&fake_pip))
             .await
             .unwrap();
 
@@ -447,12 +662,27 @@ touch site/bin/demo
         );
         let args = std::fs::read_to_string(packages.join("demo/args.txt")).unwrap();
         assert!(args.contains("--target site"), "{args}");
-        assert!(args.contains("--only-binary :all:"), "{args}");
-        assert!(args.ends_with("demo-pkg==1.2\n"), "{args}");
+        assert!(
+            args.contains("--require-hashes --only-binary :all: -r requirements.lock"),
+            "{args}"
+        );
     }
 
     #[tokio::test]
-    async fn disabled_servers_are_not_installed() {
+    async fn an_unlocked_server_is_not_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let result = install_all(
+            &catalog("demo@1.2.3", None),
+            &CatalogLock::default(),
+            root.path(),
+            &runtimes_with(Path::new("/nonexistent/bun")),
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("lockfile"));
+    }
+
+    #[tokio::test]
+    async fn disabled_servers_are_not_installed_or_locked() {
         let root = tempfile::tempdir().unwrap();
         let catalog = Catalog::parse(
             r#"
@@ -465,14 +695,15 @@ touch site/bin/demo
             "#,
         )
         .unwrap();
-        let resolved = install_all(
-            &catalog,
-            root.path(),
-            &runtimes_with(Path::new("/nonexistent/bun")),
-        )
-        .await
-        .unwrap();
+        let runtimes = runtimes_with(Path::new("/nonexistent/bun"));
+        let resolved = install_all(&catalog, &CatalogLock::default(), root.path(), &runtimes)
+            .await
+            .unwrap();
         assert!(resolved.is_empty());
+        let lock = generate_lock(&catalog, root.path(), root.path(), &runtimes)
+            .await
+            .unwrap();
+        assert_eq!(lock, CatalogLock::default());
     }
 
     #[tokio::test]
@@ -481,8 +712,10 @@ touch site/bin/demo
         let fake_bun = root.path().join("fake-bun.sh");
         write_script(&fake_bun, "#!/bin/sh\necho boom >&2\nexit 1\n");
 
+        let catalog = catalog("demo@1.2.3", None);
         let error = install_all(
-            &catalog("demo@1.2.3", None),
+            &catalog,
+            &lock_of(&catalog, "tree"),
             root.path(),
             &runtimes_with(&fake_bun),
         )
@@ -490,5 +723,112 @@ touch site/bin/demo
         .unwrap_err();
         assert!(error.to_string().contains("demo"));
         assert!(error.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn reinstalling_starts_from_an_empty_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let fake_bun = root.path().join("fake-bun.sh");
+        write_script(
+            &fake_bun,
+            r#"#!/bin/sh
+mkdir -p node_modules/demo
+echo '{"bin":"cli.js"}' > node_modules/demo/package.json
+touch node_modules/demo/cli.js
+"#,
+        );
+        let packages = root.path().join("packages");
+        let leftover = packages.join("demo/left-behind");
+        std::fs::create_dir_all(&leftover).unwrap();
+
+        let catalog = catalog("demo@1.2.3", None);
+        reinstall_server(
+            catalog.get("demo").unwrap(),
+            &lock_of(&catalog, "tree"),
+            &packages,
+            &runtimes_with(&fake_bun),
+        )
+        .await
+        .unwrap();
+        assert!(!leftover.exists());
+        assert!(packages.join("demo/node_modules/demo/cli.js").exists());
+    }
+
+    #[tokio::test]
+    async fn bun_lock_comes_from_a_lockfile_only_run() {
+        let root = tempfile::tempdir().unwrap();
+        let fake_bun = root.path().join("fake-bun.sh");
+        write_script(
+            &fake_bun,
+            r#"#!/bin/sh
+[ "$*" = "install --lockfile-only --ignore-scripts" ] || exit 1
+[ -f package.json ] || exit 1
+echo resolved-tree > bun.lock
+"#,
+        );
+        let work = root.path().join("work");
+        let catalog = catalog("demo@1.2.3", None);
+        let lock = generate_lock(&catalog, root.path(), &work, &runtimes_with(&fake_bun))
+            .await
+            .unwrap();
+        let locked = lock.get("demo").unwrap();
+        assert_eq!(locked.lock, "resolved-tree\n");
+        assert_eq!(locked.package, "demo@1.2.3");
+        assert!(!work.join("demo").exists());
+    }
+
+    #[tokio::test]
+    async fn uv_lock_is_the_compiled_output() {
+        let root = tempfile::tempdir().unwrap();
+        let fake_uv = root.path().join("fake-uv.sh");
+        write_script(
+            &fake_uv,
+            r#"#!/bin/sh
+case "$*" in
+  *"pip compile requirements.in --generate-hashes --only-binary :all:"*) ;;
+  *) exit 1 ;;
+esac
+grep -q '^demo-pkg==1.2$' requirements.in || exit 1
+echo 'demo-pkg==1.2 --hash=sha256:abc'
+"#,
+        );
+        let lock = generate_lock(
+            &python_catalog("uv"),
+            root.path(),
+            &root.path().join("work"),
+            &runtimes_with(&fake_uv),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            lock.get("demo").unwrap().lock,
+            "demo-pkg==1.2 --hash=sha256:abc\n"
+        );
+    }
+
+    #[test]
+    fn pip_reports_become_hashed_requirements() {
+        let report = json!({
+            "install": [
+                {
+                    "metadata": { "name": "zeta", "version": "2.0" },
+                    "download_info": { "archive_info": { "hashes": { "sha256": "bbb" } } },
+                },
+                {
+                    "metadata": { "name": "alpha", "version": "1.0" },
+                    "download_info": { "archive_info": { "hashes": { "sha256": "aaa" } } },
+                },
+            ],
+        });
+        assert_eq!(
+            pip_report_to_requirements(report.to_string().as_bytes()).unwrap(),
+            "alpha==1.0 --hash=sha256:aaa\nzeta==2.0 --hash=sha256:bbb\n"
+        );
+
+        let no_hash = json!({
+            "install": [{ "metadata": { "name": "a", "version": "1" }, "download_info": {} }],
+        });
+        assert!(pip_report_to_requirements(no_hash.to_string().as_bytes()).is_err());
+        assert!(pip_report_to_requirements(b"not json").is_err());
     }
 }
