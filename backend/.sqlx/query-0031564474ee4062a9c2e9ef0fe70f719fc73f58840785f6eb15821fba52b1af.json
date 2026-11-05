@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO instances (user_id, slug, server_id)\n         VALUES ($1, $2, $3)\n         RETURNING id, user_id, slug, server_id, enabled, needs_attention,\n                   created_at, updated_at",
+  "query": "INSERT INTO instances (user_id, slug, server_id)\n           VALUES ($1, $2, $3)\n           RETURNING id, user_id, slug, server_id, enabled, needs_attention,\n                     disabled_tools AS \"disabled_tools: Json<Vec<String>>\",\n                     created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,17 @@
       },
       {
         "ordinal": 6,
+        "name": "disabled_tools: Json<Vec<String>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "disabled_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -107,8 +118,9 @@
       false,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "d370bae58827df06e47d55b812629cdf28e6d55a75f548c5f58703a6d91bdbcc"
+  "hash": "0031564474ee4062a9c2e9ef0fe70f719fc73f58840785f6eb15821fba52b1af"
 }

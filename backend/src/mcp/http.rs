@@ -9,16 +9,20 @@ use axum::{
     http::{HeaderMap, HeaderName, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use futures::StreamExt;
+use futures::{StreamExt, stream};
 use serde_json::Value;
+use sqlx::PgPool;
 use zeroize::Zeroizing;
 
 use super::{
-    McpError, Message, SESSION_HEADER, Target, json_error, no_buffering, required_session_id,
-    start_failure,
+    McpError, Message, SESSION_HEADER, Target, ToolListPage, json_error, no_buffering,
+    remember_tools, required_session_id, start_failure, tool_list_page,
 };
 use crate::{
-    bridge::http::{InFlightRequest, UpstreamProcess},
+    bridge::{
+        http::{InFlightRequest, UpstreamProcess},
+        tools::{SseToolFilter, filter_tool_list},
+    },
     catalog::{HttpSettings, render_template},
     crypto, db,
     process::{EnvValue, declared_process_env, secret_values},
@@ -53,6 +57,7 @@ pub async fn post(
     let upstream = find_session_upstream(target, session_id)?;
     let in_flight = upstream.begin_request();
     let id = message.get("id").cloned();
+    let tool_list = tool_list_page(&message);
     let forwarded = forward(
         target,
         &upstream,
@@ -73,7 +78,10 @@ pub async fn post(
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         upstream.forget_session(session_id);
     }
-    respond(response, id.as_ref(), Some(in_flight))
+    match (tool_list, &id) {
+        (Some(page), Some(id)) => respond_tool_list(target, response, id, in_flight, page).await,
+        _ => respond(response, id.as_ref(), Some(in_flight)),
+    }
 }
 
 /// Starts the instance's process if needed, forwards `initialize`, records the session.
@@ -310,39 +318,55 @@ async fn render_credential_headers(
         .collect())
 }
 
+/// To an MCP client a 401 means "the hub's token is bad" and starts a new OAuth flow,
+/// when it's really the user's upstream credential that was refused.
+fn credentials_refused(status: reqwest::StatusCode, id: Option<&Value>) -> Option<Response> {
+    if status != reqwest::StatusCode::UNAUTHORIZED && status != reqwest::StatusCode::FORBIDDEN {
+        return None;
+    }
+    const MESSAGE: &str = "the server refused the credentials; check this instance's values";
+    Some(match id {
+        Some(id) => json_error(id, MESSAGE),
+        None => (StatusCode::BAD_GATEWAY, Json(MESSAGE)).into_response(),
+    })
+}
+
+fn response_builder(response: &reqwest::Response) -> axum::http::response::Builder {
+    let mut builder = Response::builder().status(response.status().as_u16());
+    for name in &FORWARDED_RESPONSE_HEADERS {
+        for value in response.headers().get_all(name) {
+            builder = builder.header(name, value);
+        }
+    }
+    if is_event_stream(response) {
+        let (name, value) = no_buffering();
+        builder = builder.header(name, value);
+    }
+    builder
+}
+
+fn is_event_stream(response: &reqwest::Response) -> bool {
+    has_content_type(response, "text/event-stream")
+}
+
+fn has_content_type(response: &reqwest::Response, media_type: &str) -> bool {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with(media_type))
+}
+
 /// Passes the upstream's response on as it arrives, JSON or SSE.
 fn respond(
     response: reqwest::Response,
     id: Option<&Value>,
     in_flight: Option<InFlightRequest>,
 ) -> Result<Response, McpError> {
-    // To an MCP client a 401 means "the hub's token is bad" and starts a new OAuth flow,
-    // when it's really the user's upstream credential that was refused.
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        const MESSAGE: &str = "the server refused the credentials; check this instance's values";
-        return Ok(match id {
-            Some(id) => json_error(id, MESSAGE),
-            None => (StatusCode::BAD_GATEWAY, Json(MESSAGE)).into_response(),
-        });
+    if let Some(refused) = credentials_refused(response.status(), id) {
+        return Ok(refused);
     }
-
-    let mut builder = Response::builder().status(status.as_u16());
-    for name in &FORWARDED_RESPONSE_HEADERS {
-        for value in response.headers().get_all(name) {
-            builder = builder.header(name, value);
-        }
-    }
-    let is_event_stream = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.starts_with("text/event-stream"));
-    if is_event_stream {
-        let (name, value) = no_buffering();
-        builder = builder.header(name, value);
-    }
-
+    let builder = response_builder(&response);
     // The guard lives inside the stream: a streamed response is still in flight.
     let stream = response.bytes_stream().map(move |chunk| {
         let _keep_alive = &in_flight;
@@ -351,4 +375,104 @@ fn respond(
     builder
         .body(Body::from_stream(stream))
         .map_err(|_| McpError::BadRequest("the upstream sent an invalid response"))
+}
+
+/// Filters a `tools/list` response. It must never reach the client uninspected, so
+/// anything that can't be read or is too large ends in an error instead.
+async fn respond_tool_list(
+    target: &Target<'_>,
+    response: reqwest::Response,
+    id: &Value,
+    in_flight: InFlightRequest,
+    page: ToolListPage,
+) -> Result<Response, McpError> {
+    if let Some(refused) = credentials_refused(response.status(), Some(id)) {
+        return Ok(refused);
+    }
+    if !response.status().is_success() {
+        return respond(response, Some(id), Some(in_flight));
+    }
+    let disabled = target.instance.disabled_tools.0.clone();
+    let max_bytes = target.state.config.settings.limits.max_line_bytes;
+    let builder = response_builder(&response);
+
+    if is_event_stream(&response) {
+        let filter = SseToolFilter::new(disabled, max_bytes);
+        let body = filtered_events(
+            response,
+            filter,
+            target.state.pool.clone(),
+            target.instance.id,
+            page,
+            in_flight,
+        );
+        return builder
+            .body(Body::from_stream(body))
+            .map_err(|_| McpError::BadRequest("the upstream sent an invalid response"));
+    }
+    if !has_content_type(&response, "application/json") {
+        return Ok(json_error(id, "the server sent an unreadable tool list"));
+    }
+
+    let Some(body) = read_bounded(response, max_bytes).await else {
+        return Ok(json_error(
+            id,
+            "the server's tool list is too large to check",
+        ));
+    };
+    let Ok(mut message) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(json_error(id, "the server sent an unreadable tool list"));
+    };
+    if let Some(seen) = filter_tool_list(&mut message, &disabled) {
+        remember_tools(&target.state.pool, target.instance.id, &seen, page).await;
+    }
+    builder
+        .body(Body::from(message.to_string()))
+        .map_err(|_| McpError::BadRequest("the upstream sent an invalid response"))
+}
+
+/// Reads a whole body, or `None` if it's over the limit or the read fails.
+async fn read_bounded(response: reqwest::Response, max_bytes: usize) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        body.extend_from_slice(&chunk.ok()?);
+        if body.len() > max_bytes {
+            return None;
+        }
+    }
+    Some(body)
+}
+
+/// An SSE stream with every tool list filtered. Too large an event ends the stream with
+/// an error, so the client sees a failed request and never an unfiltered list.
+fn filtered_events(
+    response: reqwest::Response,
+    filter: SseToolFilter,
+    pool: PgPool,
+    instance_id: i64,
+    page: ToolListPage,
+    in_flight: InFlightRequest,
+) -> impl futures::Stream<Item = std::io::Result<Vec<u8>>> {
+    let chunks = Box::pin(response.bytes_stream());
+    stream::try_unfold(
+        (chunks, filter, pool, in_flight),
+        move |(mut chunks, mut filter, pool, in_flight)| async move {
+            loop {
+                let Some(chunk) = chunks.next().await else {
+                    return Ok(None);
+                };
+                let chunk = chunk.map_err(std::io::Error::other)?;
+                let output = filter
+                    .push(&chunk)
+                    .map_err(|_| std::io::Error::other("a tool list event is too large"))?;
+                if let Some(seen) = &output.seen {
+                    remember_tools(&pool, instance_id, seen, page).await;
+                }
+                if !output.bytes.is_empty() {
+                    return Ok(Some((output.bytes, (chunks, filter, pool, in_flight))));
+                }
+            }
+        },
+    )
 }

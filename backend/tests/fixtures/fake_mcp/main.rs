@@ -22,7 +22,7 @@ impl Server {
     /// Runs a tool and returns its text output.
     async fn call_tool(&self, name: &str, arguments: &Value, stdout: Option<&Stdout>) -> String {
         match name {
-            "echo" => arguments.to_string(),
+            "echo" | "danger" => arguments.to_string(),
             "exit" => std::process::exit(arguments["code"].as_i64().unwrap_or(1) as i32),
             "env" => {
                 let env: BTreeMap<String, String> = std::env::vars().collect();
@@ -87,7 +87,10 @@ impl Server {
             }),
             "ping" => json!({}),
             "tools/list" => {
-                json!({ "tools": [{ "name": "echo", "inputSchema": { "type": "object" } }] })
+                json!({ "tools": [
+                    { "name": "echo", "description": "Says it back", "inputSchema": { "type": "object" } },
+                    { "name": "danger", "inputSchema": { "type": "object" } },
+                ] })
             }
             "tools/call" => {
                 let name = message["params"]["name"].as_str().unwrap_or_default();
@@ -201,6 +204,13 @@ mod http {
         }
         if let Err(status) = known_session(&app, &headers) {
             return status.into_response();
+        }
+        if message["method"] == "tools/list" && std::env::var("FAKE_TOOLS_SSE").is_ok() {
+            let response = app.server.handle(&message, None).await.unwrap();
+            let events = stream::iter([Ok::<_, Infallible>(
+                Event::default().event("message").data(response.to_string()),
+            )]);
+            return Sse::new(events).into_response();
         }
         let tool = message["params"]["name"].as_str().unwrap_or_default();
         match tool {

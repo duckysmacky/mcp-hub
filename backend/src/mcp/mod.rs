@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use crate::{
     app_state::AppState,
     audit,
-    bridge::json_rpc_error,
+    bridge::{json_rpc_error, tools::ToolSummary},
     catalog::{ServerMode, ServerTemplate, install::ResolvedServer},
     crypto, db,
     db::instances::Instance,
@@ -31,6 +31,7 @@ use auth::Authenticated;
 
 const SESSION_HEADER: HeaderName = HeaderName::from_static("mcp-session-id");
 const INTERNAL_ERROR: i64 = -32603;
+const INVALID_PARAMS: i64 = -32602;
 const RATE_LIMIT_RETRY_SECS: &str = "60";
 
 pub fn routes() -> Router<AppState> {
@@ -231,6 +232,32 @@ impl Target<'_> {
     }
 }
 
+/// Whether a request is `tools/list`, whose response gets filtered, and if so which page.
+fn tool_list_page(message: &Value) -> Option<ToolListPage> {
+    (message["method"] == "tools/list").then(|| ToolListPage {
+        is_later_page: message["params"]["cursor"].is_string(),
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ToolListPage {
+    is_later_page: bool,
+}
+
+/// Stores what a `tools/list` returned. Failing to is only logged: it's for display.
+async fn remember_tools(
+    pool: &sqlx::PgPool,
+    instance_id: i64,
+    tools: &[ToolSummary],
+    page: ToolListPage,
+) {
+    if let Err(error) =
+        db::instances::record_tools(pool, instance_id, tools, page.is_later_page).await
+    {
+        tracing::error!(%error, "could not store the tool list");
+    }
+}
+
 /// A failed start, as MCP sees it: the client shows the message to the user.
 fn start_failure(id: &Value, error: SupervisorError) -> Result<Response, McpError> {
     match error {
@@ -285,9 +312,27 @@ async fn handle_post(
     );
     if message["method"] == "tools/call" {
         let tool = message["params"]["name"].as_str().unwrap_or_default();
-        target
-            .audit("tool_call", Some(json!({ "tool": audit::bounded(tool) })))
-            .await;
+        let detail = Some(json!({ "tool": audit::bounded(tool) }));
+        if target
+            .instance
+            .disabled_tools
+            .0
+            .iter()
+            .any(|name| name == tool)
+        {
+            target.audit("tool_call_blocked", detail).await;
+            // Without an id it's a notification, which nothing can answer: just drop it.
+            return Ok(match message.get("id") {
+                Some(id) => Json(json_rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    "tool disabled by MCP Hub",
+                ))
+                .into_response(),
+                None => StatusCode::ACCEPTED.into_response(),
+            });
+        }
+        target.audit("tool_call", detail).await;
     }
     match target.template.mode {
         ServerMode::Stdio => stdio::post(&target, &headers, kind, message).await,

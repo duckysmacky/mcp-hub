@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE instances\n         SET last_tools = CASE WHEN $3 THEN last_tools || $2 ELSE $2 END\n         WHERE id = $1 AND (NOT $3 OR jsonb_array_length(last_tools) < $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Jsonb",
+        "Bool",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ea73c33fa49f739297764cc07c1d5a81fe2f167c85287a4392c4ce1b5edcf9b2"
+}

@@ -1,10 +1,16 @@
 //! Every query that takes a request's id also takes the user id, so ownership can't
 //! be forgotten: another user's instance simply isn't found.
 
-use sqlx::PgPool;
+use sqlx::{PgPool, types::Json};
 use time::OffsetDateTime;
 
-use crate::error::{ApiError, conflict_on_duplicate};
+use crate::{
+    bridge::tools::ToolSummary,
+    error::{ApiError, conflict_on_duplicate},
+};
+
+/// Stops a misbehaving server's endless pages from growing the row forever.
+const MAX_STORED_TOOLS: i32 = 5000;
 
 const SLUG_TAKEN: &str = "you already have an instance with this slug";
 
@@ -15,6 +21,7 @@ pub struct Instance {
     pub server_id: String,
     pub enabled: bool,
     pub needs_attention: Option<String>,
+    pub disabled_tools: Json<Vec<String>>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -47,10 +54,11 @@ pub async fn create(
 ) -> Result<Instance, ApiError> {
     sqlx::query_as!(
         Instance,
-        "INSERT INTO instances (user_id, slug, server_id)
-         VALUES ($1, $2, $3)
-         RETURNING id, user_id, slug, server_id, enabled, needs_attention,
-                   created_at, updated_at",
+        r#"INSERT INTO instances (user_id, slug, server_id)
+           VALUES ($1, $2, $3)
+           RETURNING id, user_id, slug, server_id, enabled, needs_attention,
+                     disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                     created_at, updated_at"#,
         user_id,
         slug,
         server_id,
@@ -63,9 +71,10 @@ pub async fn create(
 pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,
-        "SELECT id, user_id, slug, server_id, enabled, needs_attention,
-                created_at, updated_at
-         FROM instances WHERE user_id = $1 ORDER BY slug",
+        r#"SELECT id, user_id, slug, server_id, enabled, needs_attention,
+                  disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  created_at, updated_at
+           FROM instances WHERE user_id = $1 ORDER BY slug"#,
         user_id,
     )
     .fetch_all(pool)
@@ -75,9 +84,10 @@ pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Instance>, sqlx::Er
 pub async fn get(pool: &PgPool, user_id: i64, id: i64) -> Result<Option<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,
-        "SELECT id, user_id, slug, server_id, enabled, needs_attention,
-                created_at, updated_at
-         FROM instances WHERE id = $1 AND user_id = $2",
+        r#"SELECT id, user_id, slug, server_id, enabled, needs_attention,
+                  disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  created_at, updated_at
+           FROM instances WHERE id = $1 AND user_id = $2"#,
         id,
         user_id,
     )
@@ -92,9 +102,10 @@ pub async fn find_by_slug(
 ) -> Result<Option<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,
-        "SELECT id, user_id, slug, server_id, enabled, needs_attention,
-                created_at, updated_at
-         FROM instances WHERE user_id = $1 AND slug = $2",
+        r#"SELECT id, user_id, slug, server_id, enabled, needs_attention,
+                  disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                  created_at, updated_at
+           FROM instances WHERE user_id = $1 AND slug = $2"#,
         user_id,
         slug,
     )
@@ -108,17 +119,22 @@ pub async fn update(
     user_id: i64,
     id: i64,
     slug: Option<&str>,
+    disabled_tools: Option<&[String]>,
 ) -> Result<Option<Instance>, ApiError> {
     sqlx::query_as!(
         Instance,
-        "UPDATE instances
-         SET slug = COALESCE($3, slug), updated_at = now()
-         WHERE id = $1 AND user_id = $2
-         RETURNING id, user_id, slug, server_id, enabled, needs_attention,
-                   created_at, updated_at",
+        r#"UPDATE instances
+           SET slug = COALESCE($3, slug),
+               disabled_tools = COALESCE($4, disabled_tools),
+               updated_at = now()
+           WHERE id = $1 AND user_id = $2
+           RETURNING id, user_id, slug, server_id, enabled, needs_attention,
+                     disabled_tools AS "disabled_tools: Json<Vec<String>>",
+                     created_at, updated_at"#,
         id,
         user_id,
         slug,
+        disabled_tools.map(Json) as _,
     )
     .fetch_optional(pool)
     .await
@@ -186,6 +202,40 @@ pub async fn sync_with_catalog(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// Remembers what `tools/list` returned, for the tool filter UI. A later page of a
+/// paginated list adds to what the first one stored.
+pub async fn record_tools(
+    pool: &PgPool,
+    id: i64,
+    tools: &[ToolSummary],
+    is_later_page: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE instances
+         SET last_tools = CASE WHEN $3 THEN last_tools || $2 ELSE $2 END
+         WHERE id = $1 AND (NOT $3 OR jsonb_array_length(last_tools) < $4)",
+        id,
+        Json(tools) as _,
+        is_later_page,
+        MAX_STORED_TOOLS,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The caller must have checked that the instance belongs to the user.
+pub async fn last_tools(pool: &PgPool, id: i64) -> Result<Vec<ToolSummary>, sqlx::Error> {
+    let tools = sqlx::query_scalar!(
+        r#"SELECT last_tools AS "last_tools: Json<Vec<ToolSummary>>"
+           FROM instances WHERE id = $1"#,
+        id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(tools.map_or_else(Vec::new, |tools| tools.0))
 }
 
 /// Clears the flag left by a password reset, once the owner starts the instance again.

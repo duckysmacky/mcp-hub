@@ -15,11 +15,14 @@ use serde_json::Value;
 use tokio::sync::broadcast::{self, error::RecvError};
 
 use super::{
-    McpError, Message, SESSION_HEADER, Target, json_error, no_buffering, required_session_id,
-    start_failure,
+    McpError, Message, SESSION_HEADER, Target, json_error, no_buffering, remember_tools,
+    required_session_id, start_failure, tool_list_page,
 };
 use crate::{
-    bridge::stdio::{BridgeError, BridgeSession},
+    bridge::{
+        stdio::{BridgeError, BridgeSession},
+        tools::filter_tool_list,
+    },
     process::{declared_process_env, secret_values},
     supervisor::StartRequest,
 };
@@ -34,9 +37,18 @@ pub async fn post(
         return initialize(target, message).await;
     }
     let session = find_session(target, headers)?;
+    let tool_list = tool_list_page(&message);
     match kind {
         Message::Request => match session.request(message).await {
-            Ok(response) => Ok(Json(response).into_response()),
+            Ok(mut response) => {
+                if let Some(page) = tool_list {
+                    let disabled = &target.instance.disabled_tools.0;
+                    if let Some(seen) = filter_tool_list(&mut response, disabled) {
+                        remember_tools(&target.state.pool, target.instance.id, &seen, page).await;
+                    }
+                }
+                Ok(Json(response).into_response())
+            }
             Err(_) => Err(McpError::NotFound),
         },
         _ => match session.notify(&message).await {

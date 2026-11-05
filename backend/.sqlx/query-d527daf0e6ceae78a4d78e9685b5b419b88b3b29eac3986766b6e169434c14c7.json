@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, slug, server_id, enabled, needs_attention,\n                created_at, updated_at\n         FROM instances WHERE user_id = $1 AND slug = $2",
+  "query": "UPDATE instances\n           SET slug = COALESCE($3, slug),\n               disabled_tools = COALESCE($4, disabled_tools),\n               updated_at = now()\n           WHERE id = $1 AND user_id = $2\n           RETURNING id, user_id, slug, server_id, enabled, needs_attention,\n                     disabled_tools AS \"disabled_tools: Json<Vec<String>>\",\n                     created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,17 @@
       },
       {
         "ordinal": 6,
+        "name": "disabled_tools: Json<Vec<String>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "disabled_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -95,7 +106,9 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Text"
+        "Int8",
+        "Text",
+        "Jsonb"
       ]
     },
     "nullable": [
@@ -106,8 +119,9 @@
       false,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "21ddbff67a42c09d2593846a5dc6ff599b9d30e63c2d45865eafe62437ad04ca"
+  "hash": "d527daf0e6ceae78a4d78e9685b5b419b88b3b29eac3986766b6e169434c14c7"
 }

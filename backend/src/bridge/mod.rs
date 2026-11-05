@@ -3,6 +3,7 @@
 
 pub mod http;
 pub mod stdio;
+pub mod tools;
 
 use serde_json::{Value, json};
 

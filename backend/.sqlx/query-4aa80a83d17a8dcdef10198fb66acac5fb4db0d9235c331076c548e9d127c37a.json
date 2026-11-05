@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, slug, server_id, enabled, needs_attention,\n                created_at, updated_at\n         FROM instances WHERE user_id = $1 ORDER BY slug",
+  "query": "SELECT id, user_id, slug, server_id, enabled, needs_attention,\n                  disabled_tools AS \"disabled_tools: Json<Vec<String>>\",\n                  created_at, updated_at\n           FROM instances WHERE id = $1 AND user_id = $2",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,17 @@
       },
       {
         "ordinal": 6,
+        "name": "disabled_tools: Json<Vec<String>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "disabled_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -94,6 +105,7 @@
     ],
     "parameters": {
       "Left": [
+        "Int8",
         "Int8"
       ]
     },
@@ -105,8 +117,9 @@
       false,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "d88aa0c5324318eb638ca7911b4b84a92d072f6fa0bd31c8de62d80a33e361a3"
+  "hash": "4aa80a83d17a8dcdef10198fb66acac5fb4db0d9235c331076c548e9d127c37a"
 }

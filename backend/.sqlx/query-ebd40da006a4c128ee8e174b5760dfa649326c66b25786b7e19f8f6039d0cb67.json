@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT last_tools AS \"last_tools: Json<Vec<ToolSummary>>\"\n           FROM instances WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_tools: Json<Vec<ToolSummary>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "instances",
+            "name": "last_tools"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ebd40da006a4c128ee8e174b5760dfa649326c66b25786b7e19f8f6039d0cb67"
+}

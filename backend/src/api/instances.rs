@@ -1,6 +1,6 @@
 //! Instance management. Env values are write-only: no response ever contains one.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::{
     Json, Router,
@@ -25,6 +25,8 @@ use crate::{
 };
 
 const MAX_ENV_VALUE_BYTES: usize = 64 * 1024;
+const MAX_DISABLED_TOOLS: usize = 1000;
+const MAX_TOOL_NAME_BYTES: usize = 1024;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -44,6 +46,7 @@ pub fn routes() -> Router<AppState> {
         .route("/instances/{id}/stop", post(stop_instance))
         .route("/instances/{id}/restart", post(restart_instance))
         .route("/instances/{id}/status", get(instance_status))
+        .route("/instances/{id}/tools", get(instance_tools))
 }
 
 #[derive(Serialize)]
@@ -99,6 +102,7 @@ struct InstanceResponse {
     url: String,
     env: Vec<EnvStatus>,
     missing_required: Vec<String>,
+    disabled_tools: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -175,6 +179,7 @@ async fn describe(
         needs_attention: instance.needs_attention,
         env,
         missing_required,
+        disabled_tools: instance.disabled_tools.0,
         created_at: instance.created_at,
         updated_at: instance.updated_at,
     })
@@ -283,6 +288,7 @@ async fn get_instance(
 #[serde(deny_unknown_fields)]
 struct UpdateInstance {
     slug: Option<String>,
+    disabled_tools: Option<Vec<String>>,
 }
 
 async fn update_instance(
@@ -294,11 +300,31 @@ async fn update_instance(
     if let Some(slug) = &request.slug {
         validate_slug(slug)?;
     }
-    let instance = db::instances::update(&state.pool, session.user_id, id, request.slug.as_deref())
-        .await?
-        .ok_or(ApiError::NotFound)?;
-    // Running processes were started under the old slug.
-    state.supervisor.stop_instance(id);
+    if let Some(tools) = &request.disabled_tools {
+        let is_bounded = tools.len() <= MAX_DISABLED_TOOLS
+            && tools
+                .iter()
+                .all(|name| !name.is_empty() && name.len() <= MAX_TOOL_NAME_BYTES);
+        if !is_bounded {
+            return Err(ApiError::BadRequest(
+                "disabled_tools has too many names or an invalid one".to_owned(),
+            ));
+        }
+    }
+    let instance = db::instances::update(
+        &state.pool,
+        session.user_id,
+        id,
+        request.slug.as_deref(),
+        request.disabled_tools.as_deref(),
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    // Running processes were started under the old slug. The tool filter needs no restart:
+    // it's applied to every request.
+    if request.slug.is_some() {
+        state.supervisor.stop_instance(id);
+    }
     Ok(Json(describe(&state, &session, instance).await?))
 }
 
@@ -471,4 +497,40 @@ async fn instance_status(
         last_exit: status.last_exit,
         output_tail: status.output_tail,
     }))
+}
+
+#[derive(Serialize)]
+struct ToolStatus {
+    name: String,
+    description: Option<String>,
+    disabled: bool,
+}
+
+/// The tools seen in the last `tools/list`, plus disabled ones that weren't: a filter the
+/// user set must stay visible and removable.
+async fn instance_tools(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<ToolStatus>>, ApiError> {
+    let instance = owned_instance(&state, &session, id).await?;
+    let disabled = instance.disabled_tools.0;
+    let mut tools: BTreeMap<String, ToolStatus> = BTreeMap::new();
+    for tool in db::instances::last_tools(&state.pool, id).await? {
+        tools
+            .entry(tool.name.clone())
+            .or_insert_with(|| ToolStatus {
+                disabled: disabled.contains(&tool.name),
+                name: tool.name,
+                description: tool.description,
+            });
+    }
+    for name in disabled {
+        tools.entry(name.clone()).or_insert(ToolStatus {
+            name,
+            description: None,
+            disabled: true,
+        });
+    }
+    Ok(Json(tools.into_values().collect()))
 }
