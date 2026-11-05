@@ -35,8 +35,10 @@ const REDACTED: &str = "[redacted]";
 pub type EnvValue = (String, Zeroizing<String>);
 
 pub struct ChildSpec<'a> {
-    /// `None` runs `script` itself. Python entry points do, and write no bytecode.
+    /// `None` runs `script` itself: Python entry points and binary servers.
     pub runtime_binary: Option<&'a Path>,
+    /// Python children write no bytecode: the packages directory is shared.
+    pub is_python: bool,
     pub script: &'a Path,
     /// A pip server's packages. Set by the hub; users can't name `PYTHON*` vars.
     pub python_path: Option<&'a Path>,
@@ -77,8 +79,7 @@ pub fn build_child_command(spec: &ChildSpec<'_>) -> Command {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
-    if spec.runtime_binary.is_none() {
-        // The packages directory is shared, so children must not write to it.
+    if spec.is_python {
         command.env("PYTHONDONTWRITEBYTECODE", "1");
     }
     // SAFETY: the closure runs between fork and exec, so it may only make
@@ -315,6 +316,7 @@ mod tests {
 
         let output = build_child_command(&ChildSpec {
             runtime_binary: None,
+            is_python: true,
             script: &script,
             python_path: Some(Path::new("/packages/demo/site")),
             args: &["--flag".to_owned()],
@@ -332,6 +334,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn binaries_run_themselves_and_get_no_python_vars() {
+        let scratch = tempfile::tempdir().unwrap();
+        let binary = scratch.path().join("server.sh");
+        std::fs::write(&binary, "#!/bin/sh\necho \"args=$*\"\nenv\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let output = build_child_command(&ChildSpec {
+            runtime_binary: None,
+            is_python: false,
+            script: &binary,
+            python_path: None,
+            args: &["--flag".to_owned()],
+            env: &[],
+            scratch_dir: scratch.path(),
+        })
+        .output()
+        .await
+        .unwrap();
+
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("args=--flag"), "{text}");
+        assert!(!text.contains("PYTHON"), "{text}");
+    }
+
+    #[tokio::test]
     async fn child_sees_only_the_given_env_and_an_empty_cwd() {
         let scratch = tempfile::tempdir().unwrap();
         let script = scratch.path().join("script.sh");
@@ -342,6 +369,7 @@ mod tests {
         let env = [value("ALLOWED", "yes")];
         let output = build_child_command(&ChildSpec {
             runtime_binary: Some(Path::new("/bin/sh")),
+            is_python: false,
             script: &script,
             python_path: None,
             args: &[],
@@ -376,6 +404,7 @@ mod tests {
 
         let mut child = build_child_command(&ChildSpec {
             runtime_binary: Some(Path::new("/bin/sh")),
+            is_python: false,
             script: &script,
             python_path: None,
             args: &[],

@@ -30,6 +30,7 @@ async fn start(limits: SessionLimits, env: Vec<EnvValue>) -> Harness {
     let binary = common::fake_mcp_path();
     let command = build_child_command(&ChildSpec {
         runtime_binary: Some(&binary),
+        is_python: false,
         script: Path::new("ignored.js"),
         python_path: None,
         args: &[],

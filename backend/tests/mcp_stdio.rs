@@ -716,6 +716,27 @@ async fn the_catalog_runtime_is_used(pool: PgPool) {
     app.initialize("demo", &token).await;
 }
 
+#[sqlx::test]
+async fn a_binary_server_runs_without_any_runtime(pool: PgPool) {
+    let catalog = format!(
+        r#"
+        [[server]]
+        id = "demo"
+        mode = "stdio"
+        runtime = "binary"
+        package = "{}"
+        "#,
+        common::fake_mcp_path().display()
+    );
+    let app = McpApp::spawn(pool, &catalog, |settings| {
+        settings.runtimes.bun = "/nonexistent/bun".into();
+        settings.runtimes.node = "/nonexistent/node".into();
+    })
+    .await;
+    let (_cookie, _id, token) = connected(&app, &[]).await;
+    app.initialize("demo", &token).await;
+}
+
 const REQUIRED_CATALOG: &str = r#"
 [[server]]
 id = "demo"

@@ -277,6 +277,7 @@ impl Supervisor {
             .map_err(SupervisorError::Scratch)?;
         let command = build_child_command(&ChildSpec {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
+            is_python: request.runtime.is_python(),
             script: &request.server.script,
             python_path: request.server.python_path.as_deref(),
             args: request.args,
@@ -340,6 +341,7 @@ impl Supervisor {
             .map_err(SupervisorError::Scratch)?;
         let command = build_child_command(&ChildSpec {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
+            is_python: request.runtime.is_python(),
             script: &request.server.script,
             python_path: request.server.python_path.as_deref(),
             args: request.args,
@@ -649,11 +651,11 @@ impl Supervisor {
     }
 }
 
-/// `None` for Python: an installed entry point runs itself through its shebang.
+/// `None` when the file runs itself: a Python entry point through its shebang, or a binary.
 fn runtime_binary(runtimes: &RuntimeSettings, runtime: RuntimeKind) -> Option<&Path> {
     match runtime {
         RuntimeKind::Bun => Some(&runtimes.bun),
         RuntimeKind::Node => Some(&runtimes.node),
-        RuntimeKind::Uv | RuntimeKind::Pip => None,
+        RuntimeKind::Uv | RuntimeKind::Pip | RuntimeKind::Binary => None,
     }
 }

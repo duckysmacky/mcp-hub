@@ -1,3 +1,11 @@
+# A server with no language runtime, such as one written in Rust:
+#
+#   [[server]]
+#   id      = "my-server"
+#   mode    = "stdio"
+#   runtime = "binary"
+#   package = "/opt/mcp/my-server" # an absolute path, or a name to find on PATH
+
 [[server]]
 id       = "taiga-http"
 enabled  = true # admin toggles

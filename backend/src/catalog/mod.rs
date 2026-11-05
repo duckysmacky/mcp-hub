@@ -50,6 +50,8 @@ pub enum RuntimeKind {
     Node,
     Uv,
     Pip,
+    /// A ready-made executable: `package` is its path, or a name to find on `PATH`.
+    Binary,
 }
 
 impl RuntimeKind {
@@ -241,7 +243,11 @@ fn validate_server(server: &ServerTemplate) -> Result<(), String> {
     if !is_valid_server_id(&server.id) {
         return Err("id must match ^[a-z0-9][a-z0-9-]{0,31}$".to_owned());
     }
-    server.package_parts()?;
+    if server.runtime == RuntimeKind::Binary {
+        validate_binary_package(server)?;
+    } else {
+        server.package_parts()?;
+    }
     if server.runtime.is_python() {
         // Python packages have no manifest to pick a default entry point from.
         let bin = server
@@ -270,6 +276,24 @@ fn validate_server(server: &ServerTemplate) -> Result<(), String> {
         (ServerMode::Http, None) => Err("mode = \"http\" needs a [server.http] table".to_owned()),
         (ServerMode::Http, Some(http)) => validate_http(server, http),
     }
+}
+
+/// A binary is an absolute path or a bare name. A relative path would depend on the
+/// hub's working directory, and `..` would hide where the file really is.
+fn validate_binary_package(server: &ServerTemplate) -> Result<(), String> {
+    if server.bin.is_some() {
+        return Err("binary servers must not set `bin`: `package` is the file to run".to_owned());
+    }
+    let package = &server.package;
+    let is_absolute = package.starts_with('/');
+    let is_bare_name = !package.is_empty() && !package.contains('/') && !package.starts_with('.');
+    let has_parent = package.split('/').any(|part| part == "..");
+    if package.contains('\0') || has_parent || !(is_absolute || is_bare_name) {
+        return Err(format!(
+            "package {package} must be an absolute path or a name to find on PATH"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_env_spec(server: &ServerTemplate, spec: &EnvSpec) -> Result<(), String> {
@@ -657,6 +681,36 @@ mod tests {
             assert!(Catalog::parse(&server(runtime, "")).is_err());
             assert!(Catalog::parse(&server(runtime, r#"bin = "../python""#)).is_err());
         }
+    }
+
+    #[test]
+    fn binary_packages_are_absolute_paths_or_bare_names() {
+        let server = |package: &str, bin: &str| {
+            format!(
+                r#"
+                [[server]]
+                id = "demo"
+                mode = "stdio"
+                runtime = "binary"
+                package = "{package}"
+                {bin}
+                "#
+            )
+        };
+        for package in ["/opt/mcp/server", "/usr/bin/my.server-1", "my-server"] {
+            assert!(Catalog::parse(&server(package, "")).is_ok(), "{package}");
+        }
+        for package in [
+            "",
+            "./server",
+            "bin/server",
+            "../server",
+            "/opt/../bin/sh",
+            ".hidden",
+        ] {
+            assert!(Catalog::parse(&server(package, "")).is_err(), "{package}");
+        }
+        assert!(Catalog::parse(&server("/opt/mcp/server", r#"bin = "other""#)).is_err());
     }
 
     #[test]

@@ -3,10 +3,12 @@
 
 use std::{
     collections::HashMap,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
 use super::{
@@ -131,7 +133,10 @@ async fn install_server(
         .get(&server.id)
         .ok_or_else(|| failed(server, "not in the lockfile"))?;
     let directory = packages_dir.join(&server.id);
-    create_directory(server, &directory).await?;
+    // A binary stays where the operator put it.
+    if server.runtime != RuntimeKind::Binary {
+        create_directory(server, &directory).await?;
+    }
     tracing::info!(server = %server.id, package = %server.package, "installing package");
 
     match server.runtime {
@@ -181,6 +186,14 @@ async fn install_server(
             ]);
             run(server, command).await?;
         }
+        RuntimeKind::Binary => {
+            if binary_hash(server).await? != locked.lock {
+                return Err(failed(
+                    server,
+                    "the binary changed since it was locked; run `mcp-hub catalog lock`",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -219,8 +232,10 @@ async fn lock_server(
     directory: &Path,
     runtimes: &RuntimeSettings,
 ) -> Result<String, InstallError> {
-    let (name, version) = server.package_parts().map_err(|e| failed(server, e))?;
-    let requirement = format!("{name}=={version}");
+    let python_requirement = || {
+        let (name, version) = server.package_parts().map_err(|e| failed(server, e))?;
+        Ok::<_, InstallError>(format!("{name}=={version}"))
+    };
     match server.runtime {
         RuntimeKind::Bun | RuntimeKind::Node => {
             write_file(
@@ -241,7 +256,7 @@ async fn lock_server(
             write_file(
                 server,
                 &directory.join("requirements.in"),
-                &format!("{requirement}\n"),
+                &format!("{}\n", python_requirement()?),
             )
             .await?;
             let mut command = uv_command(runtimes, packages_dir, directory);
@@ -270,12 +285,61 @@ async fn lock_server(
                 "--quiet",
                 "--report",
                 "-",
-                &requirement,
+                &python_requirement()?,
             ]);
             let report = run(server, command).await?;
             pip_report_to_requirements(&report).map_err(|e| failed(server, e))
         }
+        RuntimeKind::Binary => binary_hash(server).await,
     }
+}
+
+/// The SHA-256 of a binary server's file, in hex: all a binary's lock needs to hold.
+async fn binary_hash(server: &ServerTemplate) -> Result<String, InstallError> {
+    let path = binary_path(server)?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| failed(server, format!("reading {}: {e}", path.display())))?;
+    Ok(Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// Finds a binary server's file: an absolute `package` as is, a bare name on the hub's own
+/// `PATH`, then the children's. Children run it by this path, so their `PATH` stays the hub's.
+fn binary_path(server: &ServerTemplate) -> Result<PathBuf, InstallError> {
+    let package = Path::new(&server.package);
+    let path = if package.is_absolute() {
+        package.to_owned()
+    } else {
+        let hub_path = std::env::var_os("PATH").unwrap_or_default();
+        let directories = std::env::split_paths(&hub_path)
+            .chain(std::env::split_paths(crate::process::GATEWAY_PATH));
+        find_executable(&server.package, directories)
+            .ok_or_else(|| failed(server, format!("{} is not on PATH", server.package)))?
+    };
+    let path = path
+        .canonicalize()
+        .map_err(|e| failed(server, format!("binary {}: {e}", path.display())))?;
+    if !is_executable(&path) {
+        return Err(failed(
+            server,
+            format!("{} is not an executable file", path.display()),
+        ));
+    }
+    Ok(path)
+}
+
+fn find_executable(name: &str, directories: impl Iterator<Item = PathBuf>) -> Option<PathBuf> {
+    directories
+        .map(|directory| directory.join(name))
+        .find(|path| is_executable(path))
+}
+
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 fn utf8_output(server: &ServerTemplate, output: Vec<u8>) -> Result<String, InstallError> {
@@ -367,6 +431,10 @@ pub fn resolve_server(
                 python_path: Some(root),
             })
         }
+        RuntimeKind::Binary => Ok(ResolvedServer {
+            script: binary_path(server)?,
+            python_path: None,
+        }),
     }
 }
 
@@ -435,8 +503,6 @@ fn select_bin<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
 
     fn runtimes_with(tool: &Path) -> RuntimeSettings {
@@ -804,6 +870,89 @@ echo 'demo-pkg==1.2 --hash=sha256:abc'
             lock.get("demo").unwrap().lock,
             "demo-pkg==1.2 --hash=sha256:abc\n"
         );
+    }
+
+    fn binary_catalog(package: &Path) -> Catalog {
+        Catalog::parse(&format!(
+            r#"
+            [[server]]
+            id = "demo"
+            mode = "stdio"
+            runtime = "binary"
+            package = "{}"
+            "#,
+            package.display()
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_binary_is_locked_by_hash_and_refused_once_changed() {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("server");
+        write_script(&binary, "#!/bin/sh\n");
+        let packages = root.path().join("packages");
+        let catalog = binary_catalog(&binary);
+        let runtimes = runtimes_with(Path::new("/nonexistent/tool"));
+
+        let lock = generate_lock(&catalog, &packages, &root.path().join("work"), &runtimes)
+            .await
+            .unwrap();
+        // `printf '#!/bin/sh\n' | sha256sum`
+        assert_eq!(
+            lock.get("demo").unwrap().lock,
+            "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"
+        );
+
+        let resolved = install_all(&catalog, &lock, &packages, &runtimes)
+            .await
+            .unwrap();
+        assert_eq!(resolved["demo"].script, binary.canonicalize().unwrap());
+        assert!(resolved["demo"].python_path.is_none());
+        assert!(!packages.join("demo").exists());
+
+        write_script(&binary, "#!/bin/sh\necho tampered\n");
+        let error = install_all(&catalog, &lock, &packages, &runtimes)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("changed since it was locked"));
+    }
+
+    #[test]
+    fn a_binary_must_be_an_executable_file() {
+        let root = tempfile::tempdir().unwrap();
+        let plain = root.path().join("plain");
+        std::fs::write(&plain, "").unwrap();
+        let cases = [
+            plain.as_path(),
+            root.path(),
+            Path::new("/nonexistent/server"),
+        ];
+        for path in cases {
+            let catalog = binary_catalog(path);
+            assert!(
+                resolve_server(catalog.get("demo").unwrap(), root.path()).is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_binary_name_is_found_in_the_first_directory_holding_an_executable() {
+        let root = tempfile::tempdir().unwrap();
+        let (first, second) = (root.path().join("first"), root.path().join("second"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("server"), "").unwrap();
+        write_script(&second.join("server"), "");
+        let directories = || [first.clone(), second.clone()].into_iter();
+
+        assert_eq!(
+            find_executable("server", directories()),
+            Some(second.join("server"))
+        );
+        assert_eq!(find_executable("missing", directories()), None);
     }
 
     #[test]

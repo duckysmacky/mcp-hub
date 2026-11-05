@@ -14,7 +14,7 @@ use std::{
 use mcp_hub::{
     app_state::AppState,
     build_router,
-    catalog::{Catalog, install::ResolvedServer},
+    catalog::{Catalog, RuntimeKind, install::ResolvedServer},
     config::{Config, Settings, SignupMode},
     supervisor::Supervisor,
 };
@@ -312,8 +312,12 @@ impl McpApp {
         let bin_scripts = parsed
             .servers()
             .map(|server| {
+                let script = match server.runtime {
+                    RuntimeKind::Binary => PathBuf::from(&server.package),
+                    _ => PathBuf::from("ignored.js"),
+                };
                 let resolved = ResolvedServer {
-                    script: PathBuf::from("ignored.js"),
+                    script,
                     python_path: None,
                 };
                 (server.id.clone(), resolved)
