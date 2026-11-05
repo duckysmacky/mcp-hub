@@ -1,6 +1,6 @@
 # Frontend - Agent Guide
 
-A deliberately simple SvelteKit SPA for managing accounts, MCP instances, and secrets, and for OAuth consent. The backend serves the static build; there is no Node/Bun server in production.
+A deliberately simple SvelteKit SPA for managing accounts, MCP instances, secrets, and connected clients, and for OAuth consent. The backend serves the static build; there is no Node/Bun server in production.
 
 Read the root `AGENTS.md` first. This file only adds frontend-specific rules.
 
@@ -17,11 +17,17 @@ Read the root `AGENTS.md` first. This file only adds frontend-specific rules.
 - Compose pages from Cobalt's `cb-*` classes and tokens. Don't invent colors, sizes, or shadows; a component's scoped `<style>` only arranges things.
 - `lib/styles/tokens.css` (generated from Cobalt's `tokens.json`) and `lib/styles/cobalt.css` (its `bundle.css`, verbatim) are vendored: re-sync them, don't edit them. Fixes and additions go in `lib/styles/app.css`.
 - JetBrains Mono is self-hosted through Fontsource, so no page calls a third party.
-- Dark and light themes: the OS decides by default, the nav button overrides it, and `app.html` applies the choice before first paint. The stored theme is the only thing in `localStorage`.
+- Dark and light themes: the OS decides by default, Settings overrides it, and `app.html` applies the choice before first paint. Theme and language are the only things in `localStorage`.
 - Text first: bracketed status words, verb-first labels, sentence case. Colour only reinforces the word. Exactly one primary button per view.
 - Motion: 120ms color changes and the spinner. Nothing else moves.
 - Where Cobalt's examples and the backend disagree (slug length, password length), the backend's rules win.
-- Cobalt also draws v2 features (Clients, Settings, tool filter, `Required` variables, the phone tab bar). They arrive with their backend.
+- Cobalt also draws READ/DESTRUCTIVE tool tags. They arrive when the API has that data.
+
+## Languages
+
+- Every visible string lives in `lib/i18n/en.ts` and `ru.ts`, read as `i18n.t.section.key`. `ru: Messages` makes a missing key a type error. Messages with parameters are functions; Russian plurals use `plural()`.
+- Operator catalog descriptions and server output stay as written.
+- Backend errors have no codes: `client.ts` passes them through `apiErrors` in `ru.ts`, matched by pattern. When a backend message changes or is added, update that table.
 
 ## Layout
 
@@ -36,20 +42,25 @@ frontend/src/
 │   ├── components/          # Button, SecretInput, EnvVars, ClientGuides, ConfirmDialog, ...
 │   ├── clients.ts           # how to connect each MCP client to an instance
 │   ├── navigation.ts        # safeNextPath: the open-redirect guard for ?next=
+│   ├── dates.ts             # relative times
+│   ├── i18n/                # en.ts, ru.ts, api-errors.ts, the reactive locale
 │   ├── status.ts            # maps an instance's status to a word and a tone
+│   ├── theme.ts             # stored theme choice
 │   └── toasts.svelte.ts     # the toast stack
 └── routes/
     ├── +layout.svelte / +layout.ts   # styles, ssr = false, auth guard
     ├── (app)/                        # signed-in pages, inside the nav
     │   ├── instances/                # list
-    │   ├── instances/new/            # pick server -> slug -> runtime
-    │   └── instances/[id]/           # env, start/stop/restart, status, settings, connection URL
+    │   ├── instances/new/            # pick server -> slug
+    │   ├── instances/[id]/           # env, start/stop/restart, status, tool filter, settings, connection URL
+    │   ├── clients/                  # connected clients (grants), revoke
+    │   └── settings/                 # change password, theme, language
     └── (card)/                       # centred card pages, no nav
-        ├── login/  signup/           # signup shown only when GET /api/auth/config says it's enabled
+        ├── login/  signup/           # sign-up follows GET /api/auth/config: enabled, disabled, invite-only
         └── consent/                  # OAuth consent page (?request=<pending id>)
 ```
 
-Pages call `api` from `client.ts` directly, and the current user comes from the root layout's `load`, so there are no per-resource wrappers and no session store. `resolve()` takes route IDs, so they include the group: `resolve('/(app)/instances')`. v2 adds `grants/`, `settings/`, and the tool filter.
+Pages call `api` from `client.ts` directly, and the current user comes from the root layout's `load`, so there are no per-resource wrappers and no session store. `resolve()` takes route IDs, so they include the group: `resolve('/(app)/instances')`.
 
 ## Rules
 
@@ -61,8 +72,9 @@ Pages call `api` from `client.ts` directly, and the current user comes from the 
 
 ### Secrets UI (write-only, like GitHub secrets)
 
-- **Every** env value is write-only: never displayed, prefilled, or sent back by the API. The UI shows `SET` plus the date it was set, with a **Replace** action and a **Remove** action.
-- Adding a value: a dropdown of the server's `env_vars` (minus the ones already set) plus a value input. Inputs use `type="password"` and `autocomplete="new-password"` and are cleared from component state immediately after a successful save.
+- A **secret** env value is write-only: never displayed, prefilled, or sent back by the API. The UI shows `SET` plus the date it was set, with a **Replace** action and a **Remove** action. Non-secret values come back as `value` and can be read and edited; they are encrypted at rest all the same.
+- Adding a value: a dropdown of the server's `env` specs (minus the ones already set or blocked by a conflict) plus an input by type. Secret inputs use `type="password"` and `autocomplete="new-password"` and are cleared from component state immediately after a successful save.
+- A required variable is tinted only when it's in `missing_required`, which already treats conflicting variables as alternatives.
 - Vars the catalog no longer lists (`in_catalog = false`) are shown as "no longer used", with Remove only.
 
 ### Consent page (`/consent`)
@@ -80,7 +92,13 @@ If the user isn't logged in, send them to `/login?next=/consent?request=...` and
 
 - Always show the connection URL `<public_url>/mcp/<slug>` with a copy button. How to add it to each client (`lib/clients.ts`) sits in a collapsed section, with one expandable entry per client, so it doesn't clutter the page. Check a client's own docs before adding or changing its guide.
 - Status comes from `/api/instances/{id}/status`: enabled/disabled, live process count, last exit, recent stderr (already redacted by the backend). Poll gently (every 5 s while the page is visible), and don't poll in background tabs. Unsaved form edits must survive a poll.
-- Start / Stop / Restart map to enable / disable (kills sessions) / kill all sessions. Ask for confirmation before Stop and Restart, because they drop live agent connections. The same goes for saving settings, which stops running processes too.
+- Start / Stop / Restart map to enable / disable (kills sessions) / kill all sessions. Ask for confirmation before Stop and Restart, because they drop live agent connections. The same goes for renaming, which stops running processes too.
+- The tool filter saves on click, needs no restart, and is empty until a connected client has listed tools.
+
+### Connected clients
+
+- Names and URLs are self-reported, so they're tagged and never linked. Never load `logo_uri`: it would call a third party and lend the client an unverified logo.
+- Revoking stops the instance's running processes. Say so in the confirmation.
 
 ### API types
 
@@ -105,4 +123,4 @@ bun run test       # vitest
 bun run build      # outputs to build/, which the backend serves from `paths.static`
 ```
 
-To test the real thing, build, run the backend, and open `PUBLIC_URL` exactly (`http://localhost:8080` in dev, not `127.0.0.1`), or the `Origin` check rejects every change. Passwords take several seconds in a debug backend build, because Argon2 is slow without optimizations.
+To test the real thing, build, run the backend, and open `PUBLIC_URL` exactly (`http://localhost:8080` in dev, not `127.0.0.1`), or the `Origin` check rejects every change. Passwords take several seconds in a debug backend build, because Argon2 is slow without optimizations. Without a migrated dev database, build the backend with `SQLX_OFFLINE=true`.
