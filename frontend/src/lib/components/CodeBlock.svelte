@@ -5,10 +5,9 @@
 
 	const COPIED_FEEDBACK_MS = 2000;
 
-	// The part that is the user's own stands out.
-	const pathStart = $derived(value.lastIndexOf('/mcp/'));
-	const host = $derived(pathStart === -1 ? value : value.slice(0, pathStart));
-	const path = $derived(pathStart === -1 ? '' : value.slice(pathStart));
+	const isMultiline = $derived(value.includes('\n'));
+	// In a URL or a command ending in one, the part that is the user's own stands out.
+	const pathStart = $derived(isMultiline ? -1 : value.lastIndexOf('/mcp/'));
 
 	let copied = $state(false);
 	let resetTimer: ReturnType<typeof setTimeout> | undefined;
@@ -28,7 +27,12 @@
 </script>
 
 <div class="cb-code">
-	<code><span class="cb-code-host">{host}</span><span class="cb-code-path">{path}</span></code>
+	<!-- No whitespace inside: the block has to copy and display exactly this value. -->
+	<code class={{ multiline: isMultiline }}
+		>{#if pathStart === -1}{value}{:else}<span class="cb-code-host"
+				>{value.slice(0, pathStart)}</span
+			><span class="cb-code-path">{value.slice(pathStart)}</span>{/if}</code
+	>
 	<button
 		class={['cb-btn cb-btn--ghost', copied && 'is-copied']}
 		type="button"
@@ -38,3 +42,13 @@
 		{copied ? 'Copied' : 'Copy'}
 	</button>
 </div>
+
+<style>
+	code.multiline {
+		display: block;
+		padding-block: var(--space-3);
+		white-space: pre;
+		font-size: 12px;
+		line-height: 18px;
+	}
+</style>
