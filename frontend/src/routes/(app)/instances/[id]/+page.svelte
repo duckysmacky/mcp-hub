@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api, messageOf } from '#lib/api/client.ts';
-	import type { InstanceStatus } from '#lib/api/types.ts';
+	import type { InstanceStatus, ToolStatus } from '#lib/api/types.ts';
 	import Banner from '#lib/components/Banner.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import ClientGuides from '#lib/components/ClientGuides.svelte';
@@ -11,6 +11,7 @@
 	import SlugField from '#lib/components/SlugField.svelte';
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
 	import { i18n } from '#lib/i18n/index.svelte.ts';
+	import ToolFilter from '#lib/components/ToolFilter.svelte';
 	import { failedExit, statusLabel } from '#lib/status.ts';
 	import { toasts } from '#lib/toasts.svelte.ts';
 	import { goto, invalidateAll } from '$app/navigation';
@@ -43,6 +44,7 @@
 		instance.needs_attention === 'server_removed' || instance.needs_attention === 'server_disabled'
 	);
 
+	let tools = $derived<ToolStatus[]>(data.tools);
 	let slug = $derived(instance.slug);
 	let settingsError = $state('');
 
@@ -58,6 +60,10 @@
 			}
 			try {
 				status = await api.get<InstanceStatus>(`/instances/${id}/status`);
+				// Only while empty: once listed, the filter owns its own state.
+				if (tools.length === 0) {
+					tools = await api.get<ToolStatus[]>(`/instances/${id}/tools`);
+				}
 			} catch {
 				// The next tick tries again; a lost session is already redirected by the client.
 			}
@@ -224,16 +230,20 @@
 			<ClientGuides slug={instance.slug} url={instance.url} />
 		</section>
 
-		<EnvVars
-			instanceId={instance.id}
-			slug={instance.slug}
-			env={instance.env}
-			specs={server?.env ?? []}
-			missingRequired={instance.missing_required}
-			liveProcesses={status.live_processes}
-			onchange={invalidateAll}
-			onrestart={askToRestart}
-		/>
+		{#if server || instance.env.length > 0}
+			<EnvVars
+				instanceId={instance.id}
+				slug={instance.slug}
+				env={instance.env}
+				specs={server?.env ?? []}
+				missingRequired={instance.missing_required}
+				liveProcesses={status.live_processes}
+				onchange={invalidateAll}
+				onrestart={askToRestart}
+			/>
+		{/if}
+
+		<ToolFilter instanceId={instance.id} {tools} />
 
 		<form class="cb-panel" onsubmit={askToRename}>
 			<div class="cb-panel-head">
