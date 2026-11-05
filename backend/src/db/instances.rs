@@ -4,10 +4,7 @@
 use sqlx::PgPool;
 use time::OffsetDateTime;
 
-use crate::{
-    catalog::{RuntimeKind, ServerTemplate},
-    error::{ApiError, conflict_on_duplicate},
-};
+use crate::error::{ApiError, conflict_on_duplicate};
 
 const SLUG_TAKEN: &str = "you already have an instance with this slug";
 
@@ -16,22 +13,10 @@ pub struct Instance {
     pub user_id: i64,
     pub slug: String,
     pub server_id: String,
-    pub runtime: Option<String>,
     pub enabled: bool,
     pub needs_attention: Option<String>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
-}
-
-impl Instance {
-    /// The instance's own choice, or else the catalog's default.
-    pub fn effective_runtime(&self, template: &ServerTemplate) -> RuntimeKind {
-        match self.runtime.as_deref() {
-            Some("bun") => RuntimeKind::Bun,
-            Some("node") => RuntimeKind::Node,
-            _ => template.runtime,
-        }
-    }
 }
 
 pub struct EnvEntry {
@@ -59,18 +44,16 @@ pub async fn create(
     user_id: i64,
     slug: &str,
     server_id: &str,
-    runtime: Option<&str>,
 ) -> Result<Instance, ApiError> {
     sqlx::query_as!(
         Instance,
-        "INSERT INTO instances (user_id, slug, server_id, runtime)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, user_id, slug, server_id, runtime, enabled, needs_attention,
+        "INSERT INTO instances (user_id, slug, server_id)
+         VALUES ($1, $2, $3)
+         RETURNING id, user_id, slug, server_id, enabled, needs_attention,
                    created_at, updated_at",
         user_id,
         slug,
         server_id,
-        runtime,
     )
     .fetch_one(pool)
     .await
@@ -80,7 +63,7 @@ pub async fn create(
 pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,
-        "SELECT id, user_id, slug, server_id, runtime, enabled, needs_attention,
+        "SELECT id, user_id, slug, server_id, enabled, needs_attention,
                 created_at, updated_at
          FROM instances WHERE user_id = $1 ORDER BY slug",
         user_id,
@@ -92,7 +75,7 @@ pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Instance>, sqlx::Er
 pub async fn get(pool: &PgPool, user_id: i64, id: i64) -> Result<Option<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,
-        "SELECT id, user_id, slug, server_id, runtime, enabled, needs_attention,
+        "SELECT id, user_id, slug, server_id, enabled, needs_attention,
                 created_at, updated_at
          FROM instances WHERE id = $1 AND user_id = $2",
         id,
@@ -109,7 +92,7 @@ pub async fn find_by_slug(
 ) -> Result<Option<Instance>, sqlx::Error> {
     sqlx::query_as!(
         Instance,
-        "SELECT id, user_id, slug, server_id, runtime, enabled, needs_attention,
+        "SELECT id, user_id, slug, server_id, enabled, needs_attention,
                 created_at, updated_at
          FROM instances WHERE user_id = $1 AND slug = $2",
         user_id,
@@ -125,19 +108,17 @@ pub async fn update(
     user_id: i64,
     id: i64,
     slug: Option<&str>,
-    runtime: Option<&str>,
 ) -> Result<Option<Instance>, ApiError> {
     sqlx::query_as!(
         Instance,
         "UPDATE instances
-         SET slug = COALESCE($3, slug), runtime = COALESCE($4, runtime), updated_at = now()
+         SET slug = COALESCE($3, slug), updated_at = now()
          WHERE id = $1 AND user_id = $2
-         RETURNING id, user_id, slug, server_id, runtime, enabled, needs_attention,
+         RETURNING id, user_id, slug, server_id, enabled, needs_attention,
                    created_at, updated_at",
         id,
         user_id,
         slug,
-        runtime,
     )
     .fetch_optional(pool)
     .await
@@ -172,21 +153,35 @@ pub async fn set_enabled(
     Ok(result.rows_affected() > 0)
 }
 
-/// Flags instances whose server left the catalog, and clears the flag if it came back.
-/// A returning server stays disabled until its owner starts it again.
-pub async fn sync_with_catalog(pool: &PgPool, server_ids: &[String]) -> Result<(), sqlx::Error> {
+/// Flags instances whose server left the catalog or was turned off, and clears the flag
+/// if it came back. A returning server stays disabled until its owner starts it again.
+pub async fn sync_with_catalog(
+    pool: &PgPool,
+    enabled_server_ids: &[String],
+    disabled_server_ids: &[String],
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         "UPDATE instances
          SET enabled = false, needs_attention = 'server_removed', updated_at = now()
-         WHERE NOT (server_id = ANY($1)) AND needs_attention IS DISTINCT FROM 'server_removed'",
-        server_ids,
+         WHERE NOT (server_id = ANY($1) OR server_id = ANY($2))
+           AND needs_attention IS DISTINCT FROM 'server_removed'",
+        enabled_server_ids,
+        disabled_server_ids,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!(
+        "UPDATE instances
+         SET enabled = false, needs_attention = 'server_disabled', updated_at = now()
+         WHERE server_id = ANY($1) AND needs_attention IS DISTINCT FROM 'server_disabled'",
+        disabled_server_ids,
     )
     .execute(pool)
     .await?;
     sqlx::query!(
         "UPDATE instances SET needs_attention = NULL, updated_at = now()
-         WHERE server_id = ANY($1) AND needs_attention = 'server_removed'",
-        server_ids,
+         WHERE server_id = ANY($1) AND needs_attention IN ('server_removed', 'server_disabled')",
+        enabled_server_ids,
     )
     .execute(pool)
     .await?;

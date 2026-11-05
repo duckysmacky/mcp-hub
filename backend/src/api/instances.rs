@@ -89,7 +89,9 @@ struct InstanceResponse {
     id: i64,
     slug: String,
     server_id: String,
-    runtime: Option<String>,
+    /// Fixed by the catalog. `null` once the server has left it.
+    runtime: Option<RuntimeKind>,
+    package: Option<String>,
     enabled: bool,
     needs_attention: Option<String>,
     url: String,
@@ -165,7 +167,8 @@ async fn describe(
         url: format!("{}/mcp/{}", state.config.public_url.as_str(), instance.slug),
         slug: instance.slug,
         server_id: instance.server_id,
-        runtime: instance.runtime,
+        runtime: template.map(|server| server.runtime),
+        package: template.map(|server| server.package.clone()),
         enabled: instance.enabled,
         needs_attention: instance.needs_attention,
         env,
@@ -189,10 +192,16 @@ fn template_of<'a>(
     state: &'a AppState,
     instance: &Instance,
 ) -> Result<&'a ServerTemplate, ApiError> {
-    state
+    let template = state
         .catalog
         .get(&instance.server_id)
-        .ok_or_else(|| ApiError::Conflict("this server was removed from the catalog".to_owned()))
+        .ok_or_else(|| ApiError::Conflict("this server was removed from the catalog".to_owned()))?;
+    if !template.enabled {
+        return Err(ApiError::Conflict(
+            "the operator has turned this server off".to_owned(),
+        ));
+    }
+    Ok(template)
 }
 
 fn validate_slug(slug: &str) -> Result<(), ApiError> {
@@ -222,7 +231,6 @@ async fn list_instances(
 struct CreateInstance {
     server_id: String,
     slug: String,
-    runtime: Option<RuntimeKind>,
 }
 
 async fn create_instance(
@@ -231,7 +239,11 @@ async fn create_instance(
     Json(request): Json<CreateInstance>,
 ) -> Result<(StatusCode, Json<InstanceResponse>), ApiError> {
     validate_slug(&request.slug)?;
-    if state.catalog.get(&request.server_id).is_none() {
+    if !state
+        .catalog
+        .get(&request.server_id)
+        .is_some_and(|server| server.enabled)
+    {
         return Err(ApiError::BadRequest("unknown server".to_owned()));
     }
     let instance = db::instances::create(
@@ -239,7 +251,6 @@ async fn create_instance(
         session.user_id,
         &request.slug,
         &request.server_id,
-        request.runtime.map(RuntimeKind::as_str),
     )
     .await?;
     Ok((
@@ -261,7 +272,6 @@ async fn get_instance(
 #[serde(deny_unknown_fields)]
 struct UpdateInstance {
     slug: Option<String>,
-    runtime: Option<RuntimeKind>,
 }
 
 async fn update_instance(
@@ -273,16 +283,10 @@ async fn update_instance(
     if let Some(slug) = &request.slug {
         validate_slug(slug)?;
     }
-    let instance = db::instances::update(
-        &state.pool,
-        session.user_id,
-        id,
-        request.slug.as_deref(),
-        request.runtime.map(RuntimeKind::as_str),
-    )
-    .await?
-    .ok_or(ApiError::NotFound)?;
-    // Running processes were started under the old slug or runtime.
+    let instance = db::instances::update(&state.pool, session.user_id, id, request.slug.as_deref())
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    // Running processes were started under the old slug.
     state.supervisor.stop_instance(id);
     Ok(Json(describe(&state, &session, instance).await?))
 }
@@ -424,7 +428,7 @@ async fn instance_status(
     Ok(Json(StatusResponse {
         enabled: instance.enabled,
         mode: template.map(|server| server.mode),
-        runtime: template.map(|server| instance.effective_runtime(server)),
+        runtime: template.map(|server| server.runtime),
         needs_attention: instance.needs_attention,
         live_processes: status.live_processes,
         last_exit: status.last_exit,

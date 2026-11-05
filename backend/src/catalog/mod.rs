@@ -49,15 +49,6 @@ pub enum RuntimeKind {
     Node,
 }
 
-impl RuntimeKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Bun => "bun",
-            Self::Node => "node",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpSettings {

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, slug, server_id, runtime, enabled, needs_attention,\n                created_at, updated_at\n         FROM instances WHERE user_id = $1 ORDER BY slug",
+  "query": "SELECT id, user_id, slug, server_id, enabled, needs_attention,\n                created_at, updated_at\n         FROM instances WHERE user_id = $1 ORDER BY slug",
   "describe": {
     "columns": [
       {
@@ -49,17 +49,6 @@
       },
       {
         "ordinal": 4,
-        "name": "runtime",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "instances",
-            "name": "runtime"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -70,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "needs_attention",
         "type_info": "Text",
         "origin": {
@@ -81,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +81,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -113,12 +102,11 @@
       false,
       false,
       false,
-      true,
       false,
       true,
       false,
       false
     ]
   },
-  "hash": "c644848710bef47d77f61cff18e34c70ad345afe1a0530c623c1dd0389fef012"
+  "hash": "d88aa0c5324318eb638ca7911b4b84a92d072f6fa0bd31c8de62d80a33e361a3"
 }

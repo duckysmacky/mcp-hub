@@ -96,7 +96,7 @@ async fn initialize(
         .ensure_upstream(StartUpstream {
             user_id: target.auth.user_id,
             instance_id: target.instance.id,
-            runtime: target.instance.effective_runtime(target.template),
+            runtime: target.template.runtime,
             script: target.script()?,
             args: &target.template.bin_args,
             http,

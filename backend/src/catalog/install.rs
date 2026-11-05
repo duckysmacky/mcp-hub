@@ -24,14 +24,14 @@ fn failed(server: &ServerTemplate, reason: impl Into<String>) -> InstallError {
     }
 }
 
-/// Installs every catalog package and returns each server's resolved bin script.
+/// Installs every enabled server's package and returns each one's resolved bin script.
 pub async fn install_all(
     catalog: &Catalog,
     packages_dir: &Path,
     bun: &Path,
 ) -> Result<HashMap<String, PathBuf>, InstallError> {
     let mut scripts = HashMap::new();
-    for server in catalog.servers() {
+    for server in catalog.servers().filter(|server| server.enabled) {
         install_server(server, packages_dir, bun).await?;
         scripts.insert(server.id.clone(), resolve_bin_script(server, packages_dir)?);
     }
@@ -249,6 +249,26 @@ touch node_modules/demo/cli.js
         assert_eq!(args.trim(), "install --ignore-scripts");
         let env = std::fs::read_to_string(directory.join("env.txt")).unwrap();
         assert!(!env.contains("DATABASE_URL"));
+    }
+
+    #[tokio::test]
+    async fn disabled_servers_are_not_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = Catalog::parse(
+            r#"
+            [[server]]
+            id = "demo"
+            enabled = false
+            mode = "stdio"
+            runtime = "bun"
+            package = "demo@1.0.0"
+            "#,
+        )
+        .unwrap();
+        let scripts = install_all(&catalog, root.path(), Path::new("/nonexistent/bun"))
+            .await
+            .unwrap();
+        assert!(scripts.is_empty());
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@ use anyhow::{Context, bail};
 use mcp_hub::{
     app_state::AppState,
     build_router,
-    catalog::{Catalog, install::install_all},
+    catalog::{Catalog, ServerTemplate, install::install_all},
     config::{Config, Settings},
     db,
     supervisor::Supervisor,
@@ -38,8 +38,15 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    let server_ids: Vec<String> = catalog.servers().map(|server| server.id.clone()).collect();
-    db::instances::sync_with_catalog(&pool, &server_ids).await?;
+    let (enabled, disabled): (Vec<_>, Vec<_>) =
+        catalog.servers().partition(|server| server.enabled);
+    let ids = |servers: Vec<&ServerTemplate>| -> Vec<String> {
+        servers
+            .into_iter()
+            .map(|server| server.id.clone())
+            .collect()
+    };
+    db::instances::sync_with_catalog(&pool, &ids(enabled), &ids(disabled)).await?;
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await

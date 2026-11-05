@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE instances\n         SET slug = COALESCE($3, slug), runtime = COALESCE($4, runtime), updated_at = now()\n         WHERE id = $1 AND user_id = $2\n         RETURNING id, user_id, slug, server_id, runtime, enabled, needs_attention,\n                   created_at, updated_at",
+  "query": "SELECT id, user_id, slug, server_id, enabled, needs_attention,\n                created_at, updated_at\n         FROM instances WHERE user_id = $1 AND slug = $2",
   "describe": {
     "columns": [
       {
@@ -49,17 +49,6 @@
       },
       {
         "ordinal": 4,
-        "name": "runtime",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "instances",
-            "name": "runtime"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -70,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "needs_attention",
         "type_info": "Text",
         "origin": {
@@ -81,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +81,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -106,8 +95,6 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Int8",
-        "Text",
         "Text"
       ]
     },
@@ -116,12 +103,11 @@
       false,
       false,
       false,
-      true,
       false,
       true,
       false,
       false
     ]
   },
-  "hash": "3d39bab065496c11653c759ced753e68a653af984b52d452339014e82edcc84d"
+  "hash": "21ddbff67a42c09d2593846a5dc6ff599b9d30e63c2d45865eafe62437ad04ca"
 }

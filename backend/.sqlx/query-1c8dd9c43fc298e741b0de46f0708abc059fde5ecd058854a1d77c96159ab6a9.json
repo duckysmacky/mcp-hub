@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE instances\n         SET enabled = false, needs_attention = 'server_removed', updated_at = now()\n         WHERE NOT (server_id = ANY($1) OR server_id = ANY($2))\n           AND needs_attention IS DISTINCT FROM 'server_removed'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1c8dd9c43fc298e741b0de46f0708abc059fde5ecd058854a1d77c96159ab6a9"
+}

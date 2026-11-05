@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, slug, server_id, runtime, enabled, needs_attention,\n                created_at, updated_at\n         FROM instances WHERE id = $1 AND user_id = $2",
+  "query": "INSERT INTO instances (user_id, slug, server_id)\n         VALUES ($1, $2, $3)\n         RETURNING id, user_id, slug, server_id, enabled, needs_attention,\n                   created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -49,17 +49,6 @@
       },
       {
         "ordinal": 4,
-        "name": "runtime",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "instances",
-            "name": "runtime"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -70,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "needs_attention",
         "type_info": "Text",
         "origin": {
@@ -81,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +81,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -106,7 +95,8 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Int8"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -114,12 +104,11 @@
       false,
       false,
       false,
-      true,
       false,
       true,
       false,
       false
     ]
   },
-  "hash": "77f89ed7aa268ca18a375e8e2eb0c43e7cf65ac67ac839e148f61f34ebbfae45"
+  "hash": "d370bae58827df06e47d55b812629cdf28e6d55a75f548c5f58703a6d91bdbcc"
 }

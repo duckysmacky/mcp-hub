@@ -706,25 +706,13 @@ async fn spawn_limits_become_http_errors(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn chosen_runtime_is_used(pool: PgPool) {
-    let app = McpApp::spawn(pool, CATALOG, |settings| {
+async fn the_catalog_runtime_is_used(pool: PgPool) {
+    let catalog = CATALOG.replace("runtime = \"bun\"", "runtime = \"node\"");
+    let app = McpApp::spawn(pool, &catalog, |settings| {
         settings.runtimes.bun = "/nonexistent/bun".into();
     })
     .await;
-    let (cookie, id, token) = connected(&app, &[]).await;
-
-    let broken = app
-        .mcp_post("demo", Some(&token), None, &initialize_message())
-        .await;
-    assert!(broken.headers().get("mcp-session-id").is_none());
-
-    app.send_json(
-        Method::PATCH,
-        &format!("/api/instances/{id}"),
-        Some(&cookie),
-        json!({ "runtime": "node" }),
-    )
-    .await;
+    let (_cookie, _id, token) = connected(&app, &[]).await;
     app.initialize("demo", &token).await;
 }
 

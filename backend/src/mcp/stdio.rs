@@ -61,7 +61,7 @@ async fn initialize(target: &Target<'_>, message: Value) -> Result<Response, Mcp
         .start_session(StartRequest {
             user_id: target.auth.user_id,
             instance_id: target.instance.id,
-            runtime: target.instance.effective_runtime(target.template),
+            runtime: target.template.runtime,
             script: target.script()?,
             args: &target.template.bin_args,
             env: declared_process_env(target.template, values),

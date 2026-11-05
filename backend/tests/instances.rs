@@ -186,7 +186,8 @@ async fn create_view_update_delete(pool: PgPool) {
     let instance: Value = app.get(&path, Some(&alice)).await.json().await.unwrap();
     assert_eq!(instance["slug"], "my-taiga");
     assert_eq!(instance["enabled"], false);
-    assert_eq!(instance["runtime"], Value::Null);
+    assert_eq!(instance["runtime"], "bun");
+    assert_eq!(instance["package"], "demo@1.0.0");
     assert_eq!(instance["url"], "http://localhost:8080/mcp/my-taiga");
 
     let updated: Value = app
@@ -194,14 +195,13 @@ async fn create_view_update_delete(pool: PgPool) {
             Method::PATCH,
             &path,
             Some(&alice),
-            json!({ "slug": "renamed", "runtime": "node" }),
+            json!({ "slug": "renamed" }),
         )
         .await
         .json()
         .await
         .unwrap();
     assert_eq!(updated["slug"], "renamed");
-    assert_eq!(updated["runtime"], "node");
 
     let list: Value = app
         .get("/api/instances", Some(&alice))
@@ -463,14 +463,14 @@ async fn removed_catalog_server_flags_and_disables_instances(pool: PgPool) {
     app.post(&format!("{path}/start"), Some(&alice), json!({}))
         .await;
 
-    db::instances::sync_with_catalog(&pool, &["other".to_owned()])
+    db::instances::sync_with_catalog(&pool, &["other".to_owned()], &[])
         .await
         .unwrap();
     let flagged: Value = app.get(&path, Some(&alice)).await.json().await.unwrap();
     assert_eq!(flagged["needs_attention"], "server_removed");
     assert_eq!(flagged["enabled"], false);
 
-    db::instances::sync_with_catalog(&pool, &["demo".to_owned()])
+    db::instances::sync_with_catalog(&pool, &["demo".to_owned()], &[])
         .await
         .unwrap();
     let back: Value = app.get(&path, Some(&alice)).await.json().await.unwrap();
@@ -660,4 +660,67 @@ async fn only_non_secret_values_can_be_read_back(pool: PgPool) {
     };
     assert_eq!(entry("HOST")["value"], "readable-host");
     assert!(entry("PASSWORD").get("value").is_none());
+}
+
+#[sqlx::test]
+async fn the_runtime_cannot_be_chosen(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool).await;
+    let body = json!({ "server_id": "demo", "slug": "demo", "runtime": "node" });
+    let created = app.post("/api/instances", Some(&alice), body).await;
+    assert_eq!(created.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let id = create(&app, &alice, "demo").await;
+    let patched = app
+        .send_json(
+            Method::PATCH,
+            &format!("/api/instances/{id}"),
+            Some(&alice),
+            json!({ "runtime": "node" }),
+        )
+        .await;
+    assert_eq!(patched.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[sqlx::test]
+async fn a_disabled_server_cannot_be_created_or_started(pool: PgPool) {
+    let Setup { app, alice, .. } = setup(pool.clone()).await;
+    let body = json!({ "server_id": "turned-off", "slug": "off" });
+    let created = app.post("/api/instances", Some(&alice), body).await;
+    assert_eq!(created.status(), StatusCode::BAD_REQUEST);
+
+    // Instances made before the operator turned the server off.
+    let id = create(&app, &alice, "demo").await;
+    assert_eq!(
+        app.post(
+            &format!("/api/instances/{id}/start"),
+            Some(&alice),
+            json!({})
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    db::instances::sync_with_catalog(&pool, &[], &["demo".to_owned()])
+        .await
+        .unwrap();
+    let flagged: Value = app
+        .get(&format!("/api/instances/{id}"), Some(&alice))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(flagged["needs_attention"], "server_disabled");
+    assert_eq!(flagged["enabled"], false);
+
+    db::instances::sync_with_catalog(&pool, &["demo".to_owned()], &[])
+        .await
+        .unwrap();
+    let back: Value = app
+        .get(&format!("/api/instances/{id}"), Some(&alice))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(back["needs_attention"], Value::Null);
+    assert_eq!(back["enabled"], false);
 }
