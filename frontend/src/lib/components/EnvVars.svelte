@@ -170,6 +170,9 @@
 						{/if}
 					</div>
 					{#if spec.description}<div class="cb-hint">{spec.description}</div>{/if}
+					{#if spec.conflicts.length > 0 && conflicts.length === 0}
+						<div class="cb-hint">{i18n.t.env.alternativeTo(spec.conflicts.join(', '))}</div>
+					{/if}
 				</div>
 				{#if entry}
 					{@render setState(entry)}
