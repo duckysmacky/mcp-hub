@@ -1,4 +1,28 @@
 services:
+  app:
+    image: ghcr.io/duckysmacky/mcp-hub:${MCP_HUB_VERSION:-latest}
+    build: .
+    env_file: .env
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+    ports:
+      - "127.0.0.1:${HUB_PORT:-8080}:8080"
+    volumes:
+      - packages:/data/packages
+      - ./config:/etc/mcp-hub:ro # settings.toml, catalog.toml, catalog.lock
+    tmpfs:
+      - /tmp:size=256m
+    depends_on:
+      database:
+        condition: service_healthy
+        required: false
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    stop_grace_period: 15s
+    restart: unless-stopped
+
   database:
     profiles: ["database"]
     image: postgres:18
@@ -6,10 +30,11 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+      PGPORT: ${DB_PORT}
     volumes:
       - postgres_data:/var/lib/postgresql
     ports:
-      - "127.0.0.1:${DB_PORT}:5432"
+      - "127.0.0.1:${DB_PORT}:${DB_PORT}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
@@ -19,3 +44,4 @@ services:
 
 volumes:
   postgres_data:
+  packages:

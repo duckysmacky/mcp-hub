@@ -1,0 +1,12 @@
+# Only what the build uses, so .env and config/ can never reach an image.
+*
+!backend/Cargo.toml
+!backend/Cargo.lock
+!backend/src
+!backend/migrations
+!backend/.sqlx
+!backend/tests/fixtures/fake_mcp
+!frontend
+frontend/node_modules
+frontend/build
+frontend/.svelte-kit
