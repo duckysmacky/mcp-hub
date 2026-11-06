@@ -40,8 +40,6 @@ pub struct ChildSpec<'a> {
     /// Python children write no bytecode: the packages directory is shared.
     pub is_python: bool,
     pub script: &'a Path,
-    /// A pip server's packages. Set by the hub; users can't name `PYTHON*` vars.
-    pub python_path: Option<&'a Path>,
     pub args: &'a [String],
     /// Must come from [`declared_process_env`], plus the hub's own port var.
     pub env: &'a [EnvValue],
@@ -72,7 +70,6 @@ pub fn build_child_command(spec: &ChildSpec<'_>) -> Command {
         )
         .env("PATH", GATEWAY_PATH)
         .env("HOME", spec.scratch_dir)
-        .envs(spec.python_path.map(|path| ("PYTHONPATH", path)))
         .current_dir(spec.scratch_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -318,7 +315,6 @@ mod tests {
             runtime_binary: None,
             is_python: true,
             script: &script,
-            python_path: Some(Path::new("/packages/demo/site")),
             args: &["--flag".to_owned()],
             env: &[],
             scratch_dir: scratch.path(),
@@ -329,7 +325,6 @@ mod tests {
 
         let text = String::from_utf8(output.stdout).unwrap();
         assert!(text.contains("args=--flag"), "{text}");
-        assert!(text.contains("PYTHONPATH=/packages/demo/site"), "{text}");
         assert!(text.contains("PYTHONDONTWRITEBYTECODE=1"), "{text}");
     }
 
@@ -344,7 +339,6 @@ mod tests {
             runtime_binary: None,
             is_python: false,
             script: &binary,
-            python_path: None,
             args: &["--flag".to_owned()],
             env: &[],
             scratch_dir: scratch.path(),
@@ -371,7 +365,6 @@ mod tests {
             runtime_binary: Some(Path::new("/bin/sh")),
             is_python: false,
             script: &script,
-            python_path: None,
             args: &[],
             env: &env,
             scratch_dir: work.path(),
@@ -406,7 +399,6 @@ mod tests {
             runtime_binary: Some(Path::new("/bin/sh")),
             is_python: false,
             script: &script,
-            python_path: None,
             args: &[],
             env: &[],
             scratch_dir: work.path(),

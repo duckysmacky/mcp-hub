@@ -279,7 +279,6 @@ impl Supervisor {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
             is_python: request.runtime.is_python(),
             script: &request.server.script,
-            python_path: request.server.python_path.as_deref(),
             args: request.args,
             env: &request.env,
             scratch_dir: &scratch_dir,
@@ -343,7 +342,6 @@ impl Supervisor {
             runtime_binary: runtime_binary(&self.config.settings.runtimes, request.runtime),
             is_python: request.runtime.is_python(),
             script: &request.server.script,
-            python_path: request.server.python_path.as_deref(),
             args: request.args,
             env: &env,
             scratch_dir: &scratch_dir,
@@ -656,6 +654,6 @@ fn runtime_binary(runtimes: &RuntimeSettings, runtime: RuntimeKind) -> Option<&P
     match runtime {
         RuntimeKind::Bun => Some(&runtimes.bun),
         RuntimeKind::Node => Some(&runtimes.node),
-        RuntimeKind::Uv | RuntimeKind::Pip | RuntimeKind::Binary => None,
+        RuntimeKind::Uv | RuntimeKind::Binary => None,
     }
 }

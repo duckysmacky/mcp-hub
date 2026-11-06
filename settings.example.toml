@@ -21,7 +21,6 @@ static   = "/usr/share/mcp-hub/static"
 bun  = "/usr/local/bin/bun"
 node = "/usr/local/bin/node"
 uv   = "/usr/local/bin/uv"
-pip  = "/usr/local/bin/pip"
 
 [limits]
 max_processes_per_user           = 6

@@ -59,14 +59,13 @@ pub enum RuntimeKind {
     Bun,
     Node,
     Uv,
-    Pip,
     /// A ready-made executable: `package` is its path, or a name to find on `PATH`.
     Binary,
 }
 
 impl RuntimeKind {
     pub fn is_python(self) -> bool {
-        matches!(self, Self::Uv | Self::Pip)
+        matches!(self, Self::Uv)
     }
 }
 
@@ -765,11 +764,9 @@ mod tests {
                 "#
             )
         };
-        for runtime in ["uv", "pip"] {
-            assert!(Catalog::parse(&server(runtime, r#"bin = "demo""#)).is_ok());
-            assert!(Catalog::parse(&server(runtime, "")).is_err());
-            assert!(Catalog::parse(&server(runtime, r#"bin = "../python""#)).is_err());
-        }
+        assert!(Catalog::parse(&server("uv", r#"bin = "demo""#)).is_ok());
+        assert!(Catalog::parse(&server("uv", "")).is_err());
+        assert!(Catalog::parse(&server("uv", r#"bin = "../python""#)).is_err());
     }
 
     #[test]

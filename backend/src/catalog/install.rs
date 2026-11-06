@@ -19,8 +19,6 @@ use crate::config::{RuntimeSettings, Settings};
 
 /// A Python server's virtual environment, relative to its package directory.
 const UV_VENV: &str = ".venv";
-/// Where pip puts a Python server's packages, relative to its package directory.
-const PIP_TARGET: &str = "site";
 const BUN_LOCKFILE: &str = "bun.lock";
 const PYTHON_LOCKFILE: &str = "requirements.lock";
 
@@ -32,8 +30,6 @@ const CUSTOM_DIRECTORY: &str = ".custom";
 #[derive(Clone, Debug)]
 pub struct ResolvedServer {
     pub script: PathBuf,
-    /// Set for pip servers, whose packages live outside any environment's default path.
-    pub python_path: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -181,14 +177,6 @@ fn uv_command(runtimes: &RuntimeSettings, packages_dir: &Path, directory: &Path)
     command
 }
 
-fn pip_command(runtimes: &RuntimeSettings, packages_dir: &Path, directory: &Path) -> Command {
-    let mut command = installer(&runtimes.pip, directory);
-    command
-        .env("PIP_CACHE_DIR", packages_dir.join(".pip-cache"))
-        .args(["install", "--no-input", "--disable-pip-version-check"]);
-    command
-}
-
 /// Installs exactly what the lockfile lists. `--only-binary` is Python's
 /// `--ignore-scripts`: no package code runs at install.
 async fn install_server(
@@ -238,21 +226,6 @@ async fn install_server(
                 PYTHON_LOCKFILE,
             ]);
             run(server, install).await?;
-        }
-        RuntimeKind::Pip => {
-            write_file(server, &directory.join(PYTHON_LOCKFILE), &locked.lock).await?;
-            let mut command = pip_command(runtimes, packages_dir, &directory);
-            command.args([
-                "--target",
-                PIP_TARGET,
-                "--upgrade",
-                "--require-hashes",
-                "--only-binary",
-                ":all:",
-                "-r",
-                PYTHON_LOCKFILE,
-            ]);
-            run(server, command).await?;
         }
         RuntimeKind::Binary => {
             if binary_hash(server).await? != locked.lock {
@@ -363,23 +336,6 @@ async fn lock_server(
             ]);
             utf8_output(server, run(server, command).await?)
         }
-        RuntimeKind::Pip => {
-            let mut command = pip_command(runtimes, packages_dir, directory);
-            command.args([
-                "--dry-run",
-                "--ignore-installed",
-                "--target",
-                PIP_TARGET,
-                "--only-binary",
-                ":all:",
-                "--quiet",
-                "--report",
-                "-",
-                &python_requirement()?,
-            ]);
-            let report = run(server, command).await?;
-            pip_report_to_requirements(&report).map_err(|e| failed(server, e))
-        }
         RuntimeKind::Binary => binary_hash(server).await,
     }
 }
@@ -443,28 +399,6 @@ fn utf8_output(server: &ServerTemplate, output: Vec<u8>) -> Result<String, Insta
     String::from_utf8(output).map_err(|_| failed(server, "the tool's output isn't UTF-8"))
 }
 
-/// Turns a `pip install --report` into requirements with hashes, for `--require-hashes`.
-/// pip reports only the wheels for this platform, so lock on the deployment platform.
-fn pip_report_to_requirements(report: &[u8]) -> Result<String, String> {
-    let report: Value =
-        serde_json::from_slice(report).map_err(|e| format!("reading pip's report: {e}"))?;
-    let packages = report["install"]
-        .as_array()
-        .ok_or("pip's report lists no packages")?;
-    let mut lines = Vec::with_capacity(packages.len());
-    for package in packages {
-        let name = package["metadata"]["name"].as_str();
-        let version = package["metadata"]["version"].as_str();
-        let hash = package["download_info"]["archive_info"]["hashes"]["sha256"].as_str();
-        let (Some(name), Some(version), Some(hash)) = (name, version, hash) else {
-            return Err("pip's report has a package without a name, version or hash".to_owned());
-        };
-        lines.push(format!("{name}=={version} --hash=sha256:{hash}\n"));
-    }
-    lines.sort();
-    Ok(lines.concat())
-}
-
 /// A package tool's command: nothing from the hub's own environment reaches it.
 fn installer(program: &Path, directory: &Path) -> Command {
     let mut command = Command::new(program);
@@ -515,22 +449,12 @@ pub fn resolve_server(
     match server.runtime {
         RuntimeKind::Bun | RuntimeKind::Node => Ok(ResolvedServer {
             script: resolve_bin_script(server, packages_dir)?,
-            python_path: None,
         }),
         RuntimeKind::Uv => Ok(ResolvedServer {
             script: python_entry(&directory.join(UV_VENV))?,
-            python_path: None,
         }),
-        RuntimeKind::Pip => {
-            let root = directory.join(PIP_TARGET);
-            Ok(ResolvedServer {
-                script: python_entry(&root)?,
-                python_path: Some(root),
-            })
-        }
         RuntimeKind::Binary => Ok(ResolvedServer {
             script: binary_path(server)?,
-            python_path: None,
         }),
     }
 }
@@ -607,7 +531,6 @@ mod tests {
             bun: tool.to_owned(),
             node: tool.to_owned(),
             uv: tool.to_owned(),
-            pip: tool.to_owned(),
         }
     }
 
@@ -729,7 +652,6 @@ touch node_modules/demo/cli.js
                 .script
                 .ends_with("node_modules/demo/cli.js")
         );
-        assert!(resolved["demo"].python_path.is_none());
         let manifest: Value =
             serde_json::from_str(&std::fs::read_to_string(directory.join("package.json")).unwrap())
                 .unwrap();
@@ -779,7 +701,6 @@ touch .venv/bin/demo
             .unwrap();
 
         assert!(resolved["demo"].script.ends_with(".venv/bin/demo"));
-        assert!(resolved["demo"].python_path.is_none());
         let directory = packages.join("demo");
         let args = std::fs::read_to_string(directory.join("args.txt")).unwrap();
         assert!(args.contains("venv --allow-existing .venv"), "{args}");
@@ -793,41 +714,6 @@ touch .venv/bin/demo
             std::fs::read_to_string(directory.join("requirements.lock"))
                 .unwrap()
                 .contains("--hash=sha256:abc")
-        );
-    }
-
-    #[tokio::test]
-    async fn pip_installs_hashed_binaries_into_its_own_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let fake_pip = root.path().join("fake-pip.sh");
-        write_script(
-            &fake_pip,
-            r#"#!/bin/sh
-echo "$@" > args.txt
-mkdir -p site/bin
-touch site/bin/demo
-"#,
-        );
-        let packages = root.path().join("packages");
-        let catalog = python_catalog("pip");
-        let lock = lock_of(&catalog, "demo-pkg==1.2 --hash=sha256:abc\n");
-        let resolved = install_all(&catalog, &lock, &packages, &runtimes_with(&fake_pip))
-            .await
-            .unwrap();
-
-        assert!(resolved["demo"].script.ends_with("site/bin/demo"));
-        assert!(
-            resolved["demo"]
-                .python_path
-                .as_ref()
-                .unwrap()
-                .ends_with("site")
-        );
-        let args = std::fs::read_to_string(packages.join("demo/args.txt")).unwrap();
-        assert!(args.contains("--target site"), "{args}");
-        assert!(
-            args.contains("--require-hashes --only-binary :all: -r requirements.lock"),
-            "{args}"
         );
     }
 
@@ -1005,7 +891,6 @@ echo 'demo-pkg==1.2 --hash=sha256:abc'
             .await
             .unwrap();
         assert_eq!(resolved["demo"].script, binary.canonicalize().unwrap());
-        assert!(resolved["demo"].python_path.is_none());
         assert!(!packages.join("demo").exists());
 
         write_script(&binary, "#!/bin/sh\necho tampered\n");
@@ -1117,31 +1002,5 @@ touch node_modules/demo/cli.js
             .await
             .unwrap_err();
         assert!(matches!(error, InstallError::Lock(LockError::Missing(_))));
-    }
-
-    #[test]
-    fn pip_reports_become_hashed_requirements() {
-        let report = json!({
-            "install": [
-                {
-                    "metadata": { "name": "zeta", "version": "2.0" },
-                    "download_info": { "archive_info": { "hashes": { "sha256": "bbb" } } },
-                },
-                {
-                    "metadata": { "name": "alpha", "version": "1.0" },
-                    "download_info": { "archive_info": { "hashes": { "sha256": "aaa" } } },
-                },
-            ],
-        });
-        assert_eq!(
-            pip_report_to_requirements(report.to_string().as_bytes()).unwrap(),
-            "alpha==1.0 --hash=sha256:aaa\nzeta==2.0 --hash=sha256:bbb\n"
-        );
-
-        let no_hash = json!({
-            "install": [{ "metadata": { "name": "a", "version": "1" }, "download_info": {} }],
-        });
-        assert!(pip_report_to_requirements(no_hash.to_string().as_bytes()).is_err());
-        assert!(pip_report_to_requirements(b"not json").is_err());
     }
 }

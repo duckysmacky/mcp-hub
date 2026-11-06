@@ -5,7 +5,7 @@
 	import { emptyEnvSpec, type CustomServerDraft } from '#lib/custom-server.ts';
 	import { i18n } from '#lib/i18n/index.svelte.ts';
 
-	const RUNTIMES: Runtime[] = ['bun', 'node', 'uv', 'pip', 'binary'];
+	const RUNTIMES: Runtime[] = ['bun', 'node', 'uv', 'binary'];
 	const MODES: ServerMode[] = ['stdio', 'http'];
 	const TYPES: EnvSpec['type'][] = ['string', 'number', 'boolean', 'enum'];
 
@@ -19,7 +19,7 @@
 
 	const t = $derived(i18n.t.custom);
 	const isBinary = $derived(draft.runtime === 'binary');
-	const isPython = $derived(draft.runtime === 'uv' || draft.runtime === 'pip');
+	const isPython = $derived(draft.runtime === 'uv');
 	const id = (name: string) => `${idPrefix}-${name}`;
 </script>
 

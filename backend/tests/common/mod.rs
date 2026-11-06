@@ -316,10 +316,7 @@ impl McpApp {
                     RuntimeKind::Binary => PathBuf::from(&server.package),
                     _ => PathBuf::from("ignored.js"),
                 };
-                let resolved = ResolvedServer {
-                    script,
-                    python_path: None,
-                };
+                let resolved = ResolvedServer { script };
                 (server.id.clone(), resolved)
             })
             .collect();

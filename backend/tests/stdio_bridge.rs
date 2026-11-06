@@ -32,7 +32,6 @@ async fn start(limits: SessionLimits, env: Vec<EnvValue>) -> Harness {
         runtime_binary: Some(&binary),
         is_python: false,
         script: Path::new("ignored.js"),
-        python_path: None,
         args: &[],
         env: &env,
         scratch_dir: &scratch,

@@ -1,6 +1,6 @@
 // These mirror the backend's DTOs by hand: change them together.
 
-export type Runtime = 'bun' | 'node' | 'uv' | 'pip' | 'binary';
+export type Runtime = 'bun' | 'node' | 'uv' | 'binary';
 export type ServerMode = 'stdio' | 'http';
 export type SignupMode = 'enabled' | 'disabled' | 'invite-only';
 

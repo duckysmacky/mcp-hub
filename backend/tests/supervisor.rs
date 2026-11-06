@@ -33,7 +33,6 @@ async fn start(
             runtime: RuntimeKind::Bun,
             server: &ResolvedServer {
                 script: "ignored.js".into(),
-                python_path: None,
             },
             args: &[],
             env: Vec::new(),
