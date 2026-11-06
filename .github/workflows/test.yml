@@ -1,0 +1,71 @@
+name: Test
+
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: mcp_hub
+          POSTGRES_PASSWORD: mcp_hub
+          POSTGRES_DB: mcp_hub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SQLX_OFFLINE: true
+      DATABASE_URL: postgres://mcp_hub:mcp_hub@localhost:5432/mcp_hub
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Check backend formatting
+        working-directory: backend
+        run: cargo fmt --all --check
+
+      - name: Lint backend
+        working-directory: backend
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run backend tests
+        working-directory: backend
+        run: cargo test
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Type-check frontend
+        working-directory: frontend
+        run: bun run check
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: bun run lint
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: bun run test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run build
