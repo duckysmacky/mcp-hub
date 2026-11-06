@@ -22,9 +22,11 @@ The reference deployment is `mcp.nikdor.xyz`. The project is built to be self-ho
 │   └── AGENTS.md
 ├── frontend/            # SvelteKit SPA (TypeScript, Svelte 5), built statically, served by the backend
 │   └── AGENTS.md
-├── catalog.example.toml # example operator catalog
-├── catalog.example.lock # its frozen dependencies (`mcp-hub catalog lock`)
-├── settings.example.toml # every settings key with its default
+├── config/              # mounted into the container; settings.toml, catalog.toml and catalog.lock are ignored
+│   ├── settings.example.toml # every settings key with its default
+│   ├── settings.dev.toml     # local development settings
+│   ├── catalog.example.toml  # example operator catalog
+│   └── catalog.example.lock  # its frozen dependencies (`mcp-hub catalog lock`)
 ├── Dockerfile
 └── docker-compose.yml
 ```
@@ -70,8 +72,8 @@ cd backend
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
-cargo run -- --settings ../settings.dev.toml run   # reads ../.env for PUBLIC_URL and DB_*
-cargo run -- --settings ../settings.dev.toml catalog lock   # after any change to catalog.example.toml
+cargo dev                                      # backend/.cargo/config.toml overrides what differs from .env
+cargo run -- --settings ../config/settings.dev.toml catalog lock   # after any change to config/catalog.example.toml
 cargo run -- user list                         # operator commands: see cli.rs
 
 # frontend

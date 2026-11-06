@@ -1,17 +1,11 @@
-# A server with no language runtime, such as one written in Rust:
-#
-#   [[server]]
-#   id      = "my-server"
-#   mode    = "stdio"
-#   runtime = "binary"
-#   package = "/opt/mcp/my-server" # an absolute path, or a name to find on PATH
+# An example catalog file for MCP Hub, which defines the servers that can be run and their configuration.
 
 [[server]]
 id       = "taiga-http"
-enabled  = true # admin toggles
+enabled  = true
 mode     = "http"
-runtime  = "bun" # should be fixed - will be shown in GUI, but cannot be changed by user
-package  = "@madebyclowd/taiga-mcp-server@1.0.2" # the package name should be shown in the GUI
+runtime  = "bun"
+package  = "@madebyclowd/taiga-mcp-server@1.0.2"
 bin      = "taiga-mcp-server-http"
 bin_args = [] # optional arguments to pass to the binary
 
@@ -23,24 +17,25 @@ headers  = { Authorization = "Bearer {TAIGA_TOKEN}" }
 [[server.env]]
 name        = "TAIGA_BASE_URL"
 description = "The base URL of the Taiga instance"
-type        = "string" # can be either string, number, boolean or custom enum
-secret      = false # when not a secret, can be freely edited and viewed in the GUI
-required    = true # when required, must be set in order to start the server
+type        = "string"    # can be either string, number, boolean or custom enum
+secret      = false       # when not a secret, can be freely edited and viewed in the GUI
+required    = true        # when required, must be set in order to start the server
 
-# example of a custom enum (not a real env variable, only for showcase)
-[[server.env]]
-name        = "TAIGA_AUTH_METHOD"
-description = "The authentication method to use for the Taiga instance"
-type        = "enum"
-enum_values = ["username_password", "token"]
-secret      = false
-required    = true
+# An example of a custom enum (not a real env variable, only for showcase)
+#
+#   [[server.env]]
+#   name        = "TAIGA_AUTH_METHOD"
+#   description = "The authentication method to use for the Taiga instance"
+#   type        = "enum"
+#   enum_values = ["username_password", "token"]
+#   secret      = false
+#   required    = true
 
 [[server.env]]
 name        = "TAIGA_TOKEN"
 description = "The token used to authenticate with the Taiga instance"
 type        = "string"
-secret      = true # when a secret, cannot be viewed in the GUI, only set (like right now)
+secret      = true       # when a secret, can only be re-set to a new value, never read back
 required    = true
 
 [[server.env]]
@@ -73,7 +68,7 @@ description = "The username used to authenticate with the Taiga instance"
 type        = "string"
 secret      = false
 required    = true
-conflicts   = ["TAIGA_TOKEN"] # if one of the conflicting env vars is set, this one cannot be set, and vice versa (and GUI warnings)
+conflicts   = ["TAIGA_TOKEN"]          # if one of the conflicting env vars is set, this one cannot be set, and vice versa
 
 [[server.env]]
 name        = "TAIGA_PASSWORD"
@@ -135,3 +130,11 @@ description = "The tools to use for the Firefly III instance"
 type        = "string"
 secret      = false
 required    = false
+
+# A server with no language runtime, such as one written in Rust or Go:
+#
+#   [[server]]
+#   id      = "some-mcp"
+#   mode    = "stdio"
+#   runtime = "binary"
+#   package = "/opt/mcp/my-server" # an absolute path, or a name to find on PATH

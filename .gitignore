@@ -5,3 +5,7 @@ target/
 .env
 
 .dev/
+
+/config/settings.toml
+/config/catalog.toml
+/config/catalog.lock

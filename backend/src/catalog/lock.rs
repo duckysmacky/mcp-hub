@@ -182,8 +182,8 @@ mod tests {
             Path::new("/etc/mcp-hub/catalog.lock")
         );
         assert_eq!(
-            CatalogLock::path_for(Path::new("../catalog.example.toml")),
-            Path::new("../catalog.example.lock")
+            CatalogLock::path_for(Path::new("../config/catalog.example.toml")),
+            Path::new("../config/catalog.example.lock")
         );
     }
 

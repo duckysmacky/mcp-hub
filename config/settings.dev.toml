@@ -1,9 +1,10 @@
-# Local development settings: cargo run -- --settings ../settings.dev.toml
+# Local development settings, used by `cargo dev` in backend/.
+
 [server]
 signup = "enabled"
 
 [paths]
-catalog  = "../catalog.example.toml"
+catalog  = "../config/catalog.example.toml"
 packages = "../.dev/packages"
 scratch  = "/tmp/mcp-hub-dev/scratch"
 static   = "../frontend/build"

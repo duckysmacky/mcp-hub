@@ -1,0 +1,9 @@
+# Local development. These win over .env, so one .env serves both cargo and Docker.
+[alias]
+dev = "run -- --settings ../config/settings.dev.toml run"
+
+[env]
+PUBLIC_URL = "http://localhost:8080"
+DB_HOST = "localhost"
+DB_SSLMODE = "disable"
+BIND_ADDR = "127.0.0.1:8080"

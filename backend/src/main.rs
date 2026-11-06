@@ -62,11 +62,13 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
         }
     }
     let catalog_path = &config.settings.paths.catalog;
-    // A single-user hub running only its own servers has no use for a catalog file.
-    let catalog = if catalog_settings.allow_custom_servers && !catalog_path.exists() {
-        Catalog::parse("")?
-    } else {
+    // Without a file the hub still starts, offering nothing but what custom servers allow.
+    let has_catalog_file = catalog_path.exists();
+    let catalog = if has_catalog_file {
         Catalog::load(catalog_path)?
+    } else {
+        tracing::warn!(path = %catalog_path.display(), "no catalog file: no servers are offered");
+        Catalog::parse("")?
     };
     if !config.settings.catalog.require_lock {
         tracing::warn!(
@@ -91,7 +93,10 @@ async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
             .map(|server| server.id.clone())
             .collect()
     };
-    db::instances::sync_with_catalog(&pool, &ids(enabled), &ids(disabled)).await?;
+    // A missing file may be a mistake, like a wrong mount, so instances keep their state.
+    if has_catalog_file {
+        db::instances::sync_with_catalog(&pool, &ids(enabled), &ids(disabled)).await?;
+    }
     db::instances::sync_custom_servers(&pool, catalog_settings.allow_custom_servers).await?;
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)

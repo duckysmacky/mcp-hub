@@ -1,14 +1,18 @@
-# Non-sensitive tuning. Every key has a default and unknown keys are rejected.
-# Credentials belong in .env. See .context/DEPLOYMENT.md.
+# This is an example configuration file for MCP Hub. It contains all the tunable parameters,
+# with their default values and comments explaining their purpose. You can copy this file to
+# settings.toml and edit it to configure your MCP Hub instance.
+#
+# This example configuration is optimized for a dockerized environment.
 
 [server]
-signup = "disabled"  # enabled, disabled, invite-only
+signup = "invite-only"  # enabled, disabled, invite-only
 
 [catalog]
-require_lock = true  # false: start without a catalog.lock, resolving what it doesn't cover
-# true: every account can define and run ANY code as the hub's user, reaching the database
-# credentials and all users' stored values. Only for hubs whose users you trust like yourself.
-allow_custom_servers = false
+require_lock = true           # false: start without a catalog.lock, resolving what it doesn't cover
+allow_custom_servers = false  # true: allow users to define and run custom server templates
+                              # security note: every account can define and run ANY code as the hub's user, 
+                              # potentially reaching the database credentials and all users' stored values. 
+                              # Only for hubs whose users you trust like yourself.
 custom_install_timeout_secs = 300
 
 [paths]
@@ -46,10 +50,9 @@ self_addresses  = []       # the host's public IPs (net_guard: allowed only on 4
 allow_http_urls = false
 trusted_proxies = []       # where X-Forwarded-For is believed, like "172.16.0.0/12"
 
-# Requests per client address per minute.
 [rate_limits]
 login              = 10
-login_per_username = 10    # across all addresses
+login_per_username = 10
 signup             = 5
 password_change    = 5
 oauth_register     = 10

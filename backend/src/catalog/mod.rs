@@ -647,14 +647,14 @@ mod tests {
 
     #[test]
     fn example_catalog_is_valid() {
-        let catalog = Catalog::parse(include_str!("../../../catalog.example.toml")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../config/catalog.example.toml")).unwrap();
         assert_eq!(catalog.get("taiga-http").unwrap().mode, ServerMode::Http);
         assert_eq!(catalog.get("firefly").unwrap().mode, ServerMode::Stdio);
     }
 
     #[test]
     fn header_vars_are_separated_from_process_env() {
-        let catalog = Catalog::parse(include_str!("../../../catalog.example.toml")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../config/catalog.example.toml")).unwrap();
         let http = catalog.get("taiga-http").unwrap().http.as_ref().unwrap();
         assert_eq!(http.header_vars(), HashSet::from(["TAIGA_TOKEN"]));
         assert_eq!(http.path, "/mcp");
@@ -933,7 +933,7 @@ mod tests {
 
     #[test]
     fn a_conflicting_var_satisfies_a_required_one() {
-        let catalog = Catalog::parse(include_str!("../../../catalog.example.toml")).unwrap();
+        let catalog = Catalog::parse(include_str!("../../../config/catalog.example.toml")).unwrap();
         let server = catalog.get("taiga-stdio").unwrap();
         let missing = |set: &[&str]| -> Vec<String> {
             let set_vars: HashSet<&str> = set.iter().copied().collect();

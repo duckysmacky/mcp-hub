@@ -157,13 +157,13 @@ impl Default for CatalogSettings {
     }
 }
 
-/// Who may create an account. Closed unless the operator opens it.
+/// Who may create an account. By default, only someone the operator gave an invite code.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SignupMode {
     Enabled,
-    #[default]
     Disabled,
+    #[default]
     InviteOnly,
 }
 
@@ -504,20 +504,21 @@ mod tests {
 
     #[test]
     fn dev_settings_file_is_valid() {
-        let settings: Settings = toml::from_str(include_str!("../../settings.dev.toml")).unwrap();
+        let settings: Settings =
+            toml::from_str(include_str!("../../config/settings.dev.toml")).unwrap();
         assert_eq!(settings.runtimes.bun, Path::new("/usr/bin/bun"));
     }
 
     #[test]
     fn example_settings_file_lists_valid_keys() {
         let settings: Settings =
-            toml::from_str(include_str!("../../settings.example.toml")).unwrap();
+            toml::from_str(include_str!("../../config/settings.example.toml")).unwrap();
         assert_eq!(settings.server.signup, SignupMode::InviteOnly);
     }
 
     #[test]
     fn signup_is_closed_by_default_and_has_three_modes() {
-        assert_eq!(Settings::default().server.signup, SignupMode::Disabled);
+        assert_eq!(Settings::default().server.signup, SignupMode::InviteOnly);
         for (text, mode) in [
             ("enabled", SignupMode::Enabled),
             ("disabled", SignupMode::Disabled),
