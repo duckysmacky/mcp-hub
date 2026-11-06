@@ -3,7 +3,7 @@
 A self-hosted, multi-user gateway that turns MCP servers into remote endpoints your AI agents can reach from anywhere.
 
 ![Release](https://github.com/duckysmacky/mcp-hub/actions/workflows/release.yml/badge.svg)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Docker](https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white)
 ![OAuth](https://img.shields.io/badge/auth-OAuth_2.1-green)
 ![Rust](https://img.shields.io/badge/backend-Rust-orange?logo=rust)
