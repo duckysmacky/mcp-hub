@@ -512,7 +512,7 @@ mod tests {
     fn example_settings_file_lists_valid_keys() {
         let settings: Settings =
             toml::from_str(include_str!("../../settings.example.toml")).unwrap();
-        assert_eq!(settings.server.signup, SignupMode::Disabled);
+        assert_eq!(settings.server.signup, SignupMode::InviteOnly);
     }
 
     #[test]

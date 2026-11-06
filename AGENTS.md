@@ -70,7 +70,7 @@ cd backend
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
-cargo run -- --settings ../settings.dev.toml   # reads ../.env for PUBLIC_URL and DB_*
+cargo run -- --settings ../settings.dev.toml run   # reads ../.env for PUBLIC_URL and DB_*
 cargo run -- --settings ../settings.dev.toml catalog lock   # after any change to catalog.example.toml
 cargo run -- user list                         # operator commands: see cli.rs
 

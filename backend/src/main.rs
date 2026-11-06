@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
+use clap::Parser;
 use mcp_hub::{
     app_state::AppState,
     build_router,
@@ -9,7 +10,7 @@ use mcp_hub::{
         install::{effective_lock, install_all},
     },
     cleanup,
-    cli::{self, Command},
+    cli::{self, Cli, Command},
     config::{Config, Settings, SignupMode},
     db,
     supervisor::Supervisor,
@@ -23,19 +24,18 @@ const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let (settings_path, command) = cli::parse(&args)?;
+    let Cli { settings, command } = Cli::parse();
     // In production the variables come from the container's environment.
     let _ = dotenvy::dotenv();
-    init_tracing(command == Command::Serve);
+    init_tracing(matches!(command, Command::Run));
 
-    let settings = match &settings_path {
+    let settings = match &settings {
         Some(path) => Settings::load(path, true)?,
         None => Settings::load(DEFAULT_SETTINGS_PATH.as_ref(), false)?,
     };
     let config = Arc::new(Config::from_env(settings)?);
     match command {
-        Command::Serve => serve(config).await,
+        Command::Run => serve(config).await,
         command => cli::run(command, &config).await,
     }
 }

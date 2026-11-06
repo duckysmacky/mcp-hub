@@ -24,8 +24,8 @@ Edition 2024, stable toolchain. No `unsafe` outside the small `pre_exec` block i
 
 ```
 backend/src/
-├── main.rs            # config load, command dispatch, startup, graceful shutdown
-├── cli.rs             # argument parsing, operator commands (user, invite, catalog)
+├── main.rs            # config load, command dispatch, startup (`run`), graceful shutdown
+├── cli/               # clap definitions and operator commands: mod.rs (Cli, dispatch), user.rs, invite.rs, catalog.rs
 ├── config.rs          # Config: .env vars (PUBLIC_URL, DB_*) + settings.toml, validation
 ├── app_state.rs       # AppState: db pool, catalog, supervisor, rate limiter, config
 ├── audit.rs           # audit_events writes (never values, arguments or tokens)
